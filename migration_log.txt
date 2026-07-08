@@ -1,0 +1,26 @@
+
+   INFO  Running migrations.  
+
+  2026_02_06_235000_create_programacion_table  4.86ms FAIL
+
+   Illuminate\Database\QueryException 
+
+  SQLSTATE[42S01]: Base table or view already exists: 1050 Table 'programacion' already exists (Connection: mysql, SQL: create table `programacion` (`id` bigint unsigned not null auto_increment primary key, `fecha` date not null, `empleado_id` bigint unsigned not null, `vehiculo_id` bigint unsigned null, `labor` varchar(255) not null, `ubicacion` varchar(255) null, `estado` enum('pendiente', 'en_progreso', 'pausado', 'completado') not null default 'pendiente', `orden_trabajo_id` bigint unsigned null, `es_novedad` tinyint(1) not null default '0', `created_at` timestamp null, `updated_at` timestamp null) default character set utf8mb4 collate 'utf8mb4_unicode_ci')
+
+  at vendor\laravel\framework\src\Illuminate\Database\Connection.php:825
+    821Ôûò                     $this->getName(), $query, $this->prepareBindings($bindings), $e
+    822Ôûò                 );
+    823Ôûò             }
+    824Ôûò 
+  Ô×£ 825Ôûò             throw new QueryException(
+    826Ôûò                 $this->getName(), $query, $this->prepareBindings($bindings), $e
+    827Ôûò             );
+    828Ôûò         }
+    829Ôûò     }
+
+  1   vendor\laravel\framework\src\Illuminate\Database\Connection.php:571
+      PDOException::("SQLSTATE[42S01]: Base table or view already exists: 1050 Table 'programacion' already exists")
+
+  2   vendor\laravel\framework\src\Illuminate\Database\Connection.php:571
+      PDOStatement::execute()
+

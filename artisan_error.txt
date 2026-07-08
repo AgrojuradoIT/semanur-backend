@@ -1,0 +1,44 @@
+
+   Error 
+
+  Class "finfo" not found
+
+  at vendor\league\mime-type-detection\src\FinfoMimeTypeDetector.php:48
+     44Ôûò         ?ExtensionToMimeTypeMap $extensionMap = null,
+     45Ôûò         ?int $bufferSampleSize = null,
+     46Ôûò         array $inconclusiveMimetypes = self::INCONCLUSIVE_MIME_TYPES
+     47Ôûò     ) {
+  Ô×£  48Ôûò         $this->finfo = new finfo(FILEINFO_MIME_TYPE, $magicFile);
+     49Ôûò         $this->extensionMap = $extensionMap ?: new GeneratedExtensionToMimeTypeMap();
+     50Ôûò         $this->bufferSampleSize = $bufferSampleSize;
+     51Ôûò         $this->inconclusiveMimetypes = $inconclusiveMimetypes;
+     52Ôûò     }
+
+  1   vendor\league\flysystem-local\LocalFilesystemAdapter.php:86
+      League\MimeTypeDetection\FinfoMimeTypeDetector::__construct()
+
+  2   vendor\laravel\framework\src\Illuminate\Filesystem\FilesystemManager.php:184
+      League\Flysystem\Local\LocalFilesystemAdapter::__construct("C:\DEV\semanur_app\backend\storage\app/public", Object(League\Flysystem\UnixVisibility\PortableVisibilityConverter))
+
+
+   Error 
+
+  Class "finfo" not found
+
+  at vendor\league\mime-type-detection\src\FinfoMimeTypeDetector.php:48
+     44Ôûò         ?ExtensionToMimeTypeMap $extensionMap = null,
+     45Ôûò         ?int $bufferSampleSize = null,
+     46Ôûò         array $inconclusiveMimetypes = self::INCONCLUSIVE_MIME_TYPES
+     47Ôûò     ) {
+  Ô×£  48Ôûò         $this->finfo = new finfo(FILEINFO_MIME_TYPE, $magicFile);
+     49Ôûò         $this->extensionMap = $extensionMap ?: new GeneratedExtensionToMimeTypeMap();
+     50Ôûò         $this->bufferSampleSize = $bufferSampleSize;
+     51Ôûò         $this->inconclusiveMimetypes = $inconclusiveMimetypes;
+     52Ôûò     }
+
+  1   vendor\league\flysystem-local\LocalFilesystemAdapter.php:86
+      League\MimeTypeDetection\FinfoMimeTypeDetector::__construct()
+
+  2   vendor\laravel\framework\src\Illuminate\Filesystem\FilesystemManager.php:184
+      League\Flysystem\Local\LocalFilesystemAdapter::__construct("C:\DEV\semanur_app\backend\storage\app/public", Object(League\Flysystem\UnixVisibility\PortableVisibilityConverter))
+

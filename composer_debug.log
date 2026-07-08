@@ -1,0 +1,13 @@
+The "3.2" constraint for "filament/filament" appears too strict and will likely not match what you want. See https://getcomposer.org/constraints
+./composer.json has been updated
+Running composer update filament/filament
+Loading composer repositories with package information
+Updating dependencies
+Your requirements could not be resolved to an installable set of packages.
+
+  Problem 1
+    - Root composer.json requires filament/filament 3.2 -> satisfiable by filament/filament[v3.2.0].
+    - filament/filament v3.2.0 requires illuminate/auth ^10.0 -> found illuminate/auth[v10.0.0, ..., v10.49.0] but these were not loaded, likely because it conflicts with another require.
+
+
+Installation failed, reverting ./composer.json and ./composer.lock to their original content.

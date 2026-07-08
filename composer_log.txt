@@ -1,0 +1,129 @@
+./composer.json has been updated
+Running composer update filament/filament
+Loading composer repositories with package information
+Updating dependencies
+Your requirements could not be resolved to an installable set of packages.
+
+  Problem 1
+    - Root composer.json requires filament/filament * -> satisfiable by filament/filament[v0.1.0, v1.0.0, ..., v1.13.4, v2.5.3, ..., v2.17.59, v3.0.0, ..., v3.3.47, v4.0.0, ..., v4.6.3, v5.0.0, ..., v5.1.3].
+    - filament/filament v0.1.0 requires php ^7.4 -> your php version (8.2.12) does not satisfy that requirement.
+    - filament/filament[v1.0.0, ..., v1.13.4] require illuminate/auth ^8.0 -> found illuminate/auth[v8.0.0, ..., v8.83.27] but these were not loaded, likely because it conflicts with another require.
+    - filament/filament[v2.9.7, ..., v2.16.65] require illuminate/auth ^8.6|^9.0 -> found illuminate/auth[v8.6.0, ..., v8.83.27, v9.0.0, ..., v9.52.16] but these were not loaded, likely because it conflicts with another require.
+    - filament/filament v2.15.0 requires filament/notifications v2.15.0 -> found filament/notifications[dev-3.x-alpha, v2.15.1, ..., 2.x-dev, v3.0.0-alpha1, ..., 3.x-dev, v4.0.0-alpha1, ..., 4.x-dev, v5.0.0-beta1, ..., 5.x-dev] but it does not match the constraint.
+    - filament/filament[v2.16.66, ..., v2.17.59] require illuminate/auth ^8.6|^9.0|^10.0 -> found illuminate/auth[v8.6.0, ..., v8.83.27, v9.0.0, ..., v9.52.16, v10.0.0, ..., v10.49.0] but these were not loaded, likely because it conflicts with another require.
+    - filament/filament v2.17.23 requires filament/tables v2.17.23 -> found filament/tables[dev-3.x-alpha, v1.0.0, ..., v1.10.12, v2.3.6, ..., 2.x-dev, v3.0.0-alpha1, ..., 3.x-dev, v4.0.0-alpha1, ..., 4.x-dev, v5.0.0-beta1, ..., 5.x-dev] but it does not match the constraint.
+    - filament/filament[v2.5.3, ..., v2.9.6] require illuminate/auth ^8.6 -> found illuminate/auth[v8.6.0, ..., v8.83.27] but these were not loaded, likely because it conflicts with another require.
+    - filament/filament[v3.0.0, ..., v3.0.8] require illuminate/auth ^9.0|^10.0 -> found illuminate/auth[v9.0.0, ..., v9.52.16, v10.0.0, ..., v10.49.0] but these were not loaded, likely because it conflicts with another require.
+    - filament/filament[v3.0.9, ..., v3.2.35] require illuminate/auth ^10.0 -> found illuminate/auth[v10.0.0, ..., v10.49.0] but these were not loaded, likely because it conflicts with another require.
+    - filament/filament v3.1.38 requires filament/infolists v3.1.38 -> found filament/infolists[dev-3.x-alpha, v3.0.0-alpha1, ..., 3.x-dev, v4.0.0-alpha1, ..., 4.x-dev, v5.0.0-beta1, ..., 5.x-dev] but it does not match the constraint.
+    - filament/filament[v3.2.39, ..., v3.2.142] require illuminate/auth ^10.45|^11.0 -> found illuminate/auth[v10.45.0, ..., v10.49.0, v11.0.0, ..., v11.47.0] but these were not loaded, likely because it conflicts with another require.
+    - filament/filament[v3.2.36, ..., v3.2.38] require illuminate/auth ^10.45 -> found illuminate/auth[v10.45.0, ..., v10.49.0] but these were not loaded, likely because it conflicts with another require.
+    - filament/filament v3.3.0 requires filament/support v3.3.0 -> satisfiable by filament/support[v3.3.0].
+    - filament/filament v3.3.1 requires filament/support v3.3.1 -> satisfiable by filament/support[v3.3.1].
+    - filament/filament v3.3.10 requires filament/support v3.3.10 -> satisfiable by filament/support[v3.3.10].
+    - filament/filament v3.3.11 requires filament/support v3.3.11 -> satisfiable by filament/support[v3.3.11].
+    - filament/filament v3.3.12 requires filament/support v3.3.12 -> satisfiable by filament/support[v3.3.12].
+    - filament/filament v3.3.13 requires filament/support v3.3.13 -> satisfiable by filament/support[v3.3.13].
+    - filament/filament v3.3.14 requires filament/support v3.3.14 -> satisfiable by filament/support[v3.3.14].
+    - filament/filament v3.3.15 requires filament/support v3.3.15 -> satisfiable by filament/support[v3.3.15].
+    - filament/filament v3.3.16 requires filament/support v3.3.16 -> satisfiable by filament/support[v3.3.16].
+    - filament/filament v3.3.17 requires filament/support v3.3.17 -> satisfiable by filament/support[v3.3.17].
+    - filament/filament v3.3.18 requires filament/support v3.3.18 -> satisfiable by filament/support[v3.3.18].
+    - filament/filament v3.3.19 requires filament/support v3.3.19 -> satisfiable by filament/support[v3.3.19].
+    - filament/filament v3.3.2 requires filament/support v3.3.2 -> satisfiable by filament/support[v3.3.2].
+    - filament/filament v3.3.20 requires filament/support v3.3.20 -> satisfiable by filament/support[v3.3.20].
+    - filament/filament v3.3.21 requires filament/support v3.3.21 -> satisfiable by filament/support[v3.3.21].
+    - filament/filament v3.3.22 requires filament/support v3.3.22 -> satisfiable by filament/support[v3.3.22].
+    - filament/filament v3.3.23 requires filament/support v3.3.23 -> satisfiable by filament/support[v3.3.23].
+    - filament/filament v3.3.24 requires filament/support v3.3.24 -> satisfiable by filament/support[v3.3.24].
+    - filament/filament v3.3.25 requires filament/support v3.3.25 -> satisfiable by filament/support[v3.3.25].
+    - filament/filament v3.3.26 requires filament/support v3.3.26 -> satisfiable by filament/support[v3.3.26].
+    - filament/filament v3.3.27 requires filament/support v3.3.27 -> satisfiable by filament/support[v3.3.27].
+    - filament/filament v3.3.28 requires filament/support v3.3.28 -> satisfiable by filament/support[v3.3.28].
+    - filament/filament v3.3.29 requires filament/support v3.3.29 -> satisfiable by filament/support[v3.3.29].
+    - filament/filament v3.3.3 requires filament/support v3.3.3 -> satisfiable by filament/support[v3.3.3].
+    - filament/filament v3.3.30 requires filament/support v3.3.30 -> satisfiable by filament/support[v3.3.30].
+    - filament/filament v3.3.31 requires filament/support v3.3.31 -> satisfiable by filament/support[v3.3.31].
+    - filament/filament v3.3.32 requires filament/support v3.3.32 -> satisfiable by filament/support[v3.3.32].
+    - filament/filament v3.3.33 requires filament/support v3.3.33 -> satisfiable by filament/support[v3.3.33].
+    - filament/filament v3.3.34 requires filament/support v3.3.34 -> satisfiable by filament/support[v3.3.34].
+    - filament/filament v3.3.35 requires filament/support v3.3.35 -> satisfiable by filament/support[v3.3.35].
+    - filament/filament v3.3.36 requires filament/support v3.3.36 -> satisfiable by filament/support[v3.3.36].
+    - filament/filament v3.3.37 requires filament/support v3.3.37 -> satisfiable by filament/support[v3.3.37].
+    - filament/filament v3.3.38 requires filament/support v3.3.38 -> satisfiable by filament/support[v3.3.38].
+    - filament/filament v3.3.39 requires filament/support v3.3.39 -> satisfiable by filament/support[v3.3.39].
+    - filament/filament v3.3.4 requires filament/support v3.3.4 -> satisfiable by filament/support[v3.3.4].
+    - filament/filament v3.3.40 requires filament/support v3.3.40 -> satisfiable by filament/support[v3.3.40].
+    - filament/filament v3.3.41 requires filament/support v3.3.41 -> satisfiable by filament/support[v3.3.41].
+    - filament/filament v3.3.42 requires filament/support v3.3.42 -> satisfiable by filament/support[v3.3.42].
+    - filament/filament v3.3.43 requires filament/support v3.3.43 -> satisfiable by filament/support[v3.3.43].
+    - filament/filament v3.3.45 requires filament/support v3.3.45 -> satisfiable by filament/support[v3.3.45].
+    - filament/filament v3.3.46 requires filament/support v3.3.46 -> satisfiable by filament/support[v3.3.46].
+    - filament/filament v3.3.47 requires filament/support v3.3.47 -> satisfiable by filament/support[v3.3.47].
+    - filament/filament v3.3.5 requires filament/support v3.3.5 -> satisfiable by filament/support[v3.3.5].
+    - filament/filament v3.3.6 requires filament/support v3.3.6 -> satisfiable by filament/support[v3.3.6].
+    - filament/filament v3.3.7 requires filament/support v3.3.7 -> satisfiable by filament/support[v3.3.7].
+    - filament/filament v3.3.8 requires filament/support v3.3.8 -> satisfiable by filament/support[v3.3.8].
+    - filament/filament v3.3.9 requires filament/support v3.3.9 -> satisfiable by filament/support[v3.3.9].
+    - filament/filament v4.0.0 requires filament/support v4.0.0 -> satisfiable by filament/support[v4.0.0].
+    - filament/filament v4.0.1 requires filament/support v4.0.1 -> satisfiable by filament/support[v4.0.1].
+    - filament/filament v4.0.10 requires filament/support v4.0.10 -> satisfiable by filament/support[v4.0.10].
+    - filament/filament v4.0.11 requires filament/support v4.0.11 -> satisfiable by filament/support[v4.0.11].
+    - filament/filament v4.0.12 requires filament/support v4.0.12 -> satisfiable by filament/support[v4.0.12].
+    - filament/filament v4.0.13 requires filament/support v4.0.13 -> satisfiable by filament/support[v4.0.13].
+    - filament/filament v4.0.14 requires filament/support v4.0.14 -> satisfiable by filament/support[v4.0.14].
+    - filament/filament v4.0.15 requires filament/support v4.0.15 -> satisfiable by filament/support[v4.0.15].
+    - filament/filament v4.0.16 requires filament/support v4.0.16 -> satisfiable by filament/support[v4.0.16].
+    - filament/filament v4.0.17 requires filament/support v4.0.17 -> satisfiable by filament/support[v4.0.17].
+    - filament/filament v4.0.18 requires filament/support v4.0.18 -> satisfiable by filament/support[v4.0.18].
+    - filament/filament v4.0.19 requires filament/support v4.0.19 -> satisfiable by filament/support[v4.0.19].
+    - filament/filament v4.0.2 requires filament/support v4.0.2 -> satisfiable by filament/support[v4.0.2].
+    - filament/filament v4.0.20 requires filament/support v4.0.20 -> satisfiable by filament/support[v4.0.20].
+    - filament/filament v4.0.3 requires filament/support v4.0.3 -> satisfiable by filament/support[v4.0.3].
+    - filament/filament v4.0.4 requires filament/support v4.0.4 -> satisfiable by filament/support[v4.0.4].
+    - filament/filament v4.0.5 requires filament/support v4.0.5 -> satisfiable by filament/support[v4.0.5].
+    - filament/filament v4.0.6 requires filament/support v4.0.6 -> satisfiable by filament/support[v4.0.6].
+    - filament/filament v4.0.7 requires filament/support v4.0.7 -> satisfiable by filament/support[v4.0.7].
+    - filament/filament v4.0.8 requires filament/support v4.0.8 -> satisfiable by filament/support[v4.0.8].
+    - filament/filament v4.0.9 requires filament/support v4.0.9 -> satisfiable by filament/support[v4.0.9].
+    - filament/filament v4.1.0 requires filament/support v4.1.0 -> satisfiable by filament/support[v4.1.0].
+    - filament/filament v4.1.1 requires filament/support v4.1.1 -> satisfiable by filament/support[v4.1.1].
+    - filament/filament v4.1.10 requires filament/support v4.1.10 -> satisfiable by filament/support[v4.1.10].
+    - filament/filament v4.1.2 requires filament/support v4.1.2 -> satisfiable by filament/support[v4.1.2].
+    - filament/filament v4.1.3 requires filament/support v4.1.3 -> satisfiable by filament/support[v4.1.3].
+    - filament/filament v4.1.4 requires filament/support v4.1.4 -> satisfiable by filament/support[v4.1.4].
+    - filament/filament v4.1.5 requires filament/support v4.1.5 -> satisfiable by filament/support[v4.1.5].
+    - filament/filament v4.1.6 requires filament/support v4.1.6 -> satisfiable by filament/support[v4.1.6].
+    - filament/filament v4.1.7 requires filament/support v4.1.7 -> satisfiable by filament/support[v4.1.7].
+    - filament/filament v4.1.8 requires filament/support v4.1.8 -> satisfiable by filament/support[v4.1.8].
+    - filament/filament v4.1.9 requires filament/support v4.1.9 -> satisfiable by filament/support[v4.1.9].
+    - filament/filament v4.2.0 requires filament/support v4.2.0 -> satisfiable by filament/support[v4.2.0].
+    - filament/filament v4.2.1 requires filament/support v4.2.1 -> satisfiable by filament/support[v4.2.1].
+    - filament/filament v4.2.2 requires filament/support v4.2.2 -> satisfiable by filament/support[v4.2.2].
+    - filament/filament v4.2.3 requires filament/support v4.2.3 -> satisfiable by filament/support[v4.2.3].
+    - filament/filament v4.2.4 requires filament/support v4.2.4 -> satisfiable by filament/support[v4.2.4].
+    - filament/filament v4.3.0 requires filament/support v4.3.0 -> satisfiable by filament/support[v4.3.0].
+    - filament/filament v4.3.1 requires filament/support v4.3.1 -> satisfiable by filament/support[v4.3.1].
+    - filament/filament v4.4.0 requires filament/support v4.4.0 -> satisfiable by filament/support[v4.4.0].
+    - filament/filament v4.5.0 requires filament/support v4.5.0 -> satisfiable by filament/support[v4.5.0].
+    - filament/filament v4.5.1 requires filament/support v4.5.1 -> satisfiable by filament/support[v4.5.1].
+    - filament/filament v4.5.2 requires filament/support v4.5.2 -> satisfiable by filament/support[v4.5.2].
+    - filament/filament v4.5.3 requires filament/support v4.5.3 -> satisfiable by filament/support[v4.5.3].
+    - filament/filament v4.6.0 requires filament/support v4.6.0 -> satisfiable by filament/support[v4.6.0].
+    - filament/filament v4.6.1 requires filament/support v4.6.1 -> satisfiable by filament/support[v4.6.1].
+    - filament/filament v4.6.2 requires filament/support v4.6.2 -> satisfiable by filament/support[v4.6.2].
+    - filament/filament v4.6.3 requires filament/support v4.6.3 -> satisfiable by filament/support[v4.6.3].
+    - filament/filament v5.0.0 requires filament/support v5.0.0 -> satisfiable by filament/support[v5.0.0].
+    - filament/filament v5.1.0 requires filament/support v5.1.0 -> satisfiable by filament/support[v5.1.0].
+    - filament/filament v5.1.1 requires filament/support v5.1.1 -> satisfiable by filament/support[v5.1.1].
+    - filament/filament v5.1.2 requires filament/support v5.1.2 -> satisfiable by filament/support[v5.1.2].
+    - filament/filament v5.1.3 requires filament/support v5.1.3 -> satisfiable by filament/support[v5.1.3].
+    - filament/support[v3.3.0, ..., v3.3.47, v4.0.0, ..., v4.6.3, v5.0.0, ..., v5.1.3] require ext-intl * -> it is missing from your system. Install or enable PHP's intl extension.
+
+To enable extensions, verify that they are enabled in your .ini files:
+    - C:\xampp\php\php.ini
+You can also run `php --ini` in a terminal to see which files are used by PHP in CLI mode.
+Alternatively, you can run Composer with `--ignore-platform-req=ext-intl` to temporarily ignore these required extensions.
+You can also try re-running composer require with an explicit version constraint, e.g. "composer require filament/filament:*" to figure out if any version is installable, or "composer require filament/filament:^2.1" if you know which you need.
+
+Installation failed, reverting ./composer.json and ./composer.lock to their original content.

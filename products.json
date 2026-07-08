@@ -1,0 +1,50 @@
+[
+    {
+        "producto_id": 28,
+        "producto_sku": "AC000052",
+        "producto_nombre": "TAPA TANQUE ACPM",
+        "producto_stock_actual": "4.00"
+    },
+    {
+        "producto_id": 70,
+        "producto_sku": "AC000213",
+        "producto_nombre": "TAPA TANQUE GASOLINA MOTOSIERRA",
+        "producto_stock_actual": "0.20"
+    },
+    {
+        "producto_id": 72,
+        "producto_sku": "AL000001",
+        "producto_nombre": "GASOLINA",
+        "producto_stock_actual": "3828.78"
+    },
+    {
+        "producto_id": 73,
+        "producto_sku": "AL000002",
+        "producto_nombre": "ACPM",
+        "producto_stock_actual": "6238.00"
+    },
+    {
+        "producto_id": 310,
+        "producto_sku": "FI000098",
+        "producto_nombre": "FILTRO ACPM INVASA",
+        "producto_stock_actual": "10.00"
+    },
+    {
+        "producto_id": 339,
+        "producto_sku": "FI000142",
+        "producto_nombre": "FILTRO GASOLINA BQ104387306 320D",
+        "producto_stock_actual": "6.00"
+    },
+    {
+        "producto_id": 652,
+        "producto_sku": "HR000297",
+        "producto_nombre": "BOMBA ELECT GASOLINA UNIVERSAL 12V INJE",
+        "producto_stock_actual": "8.00"
+    },
+    {
+        "producto_id": 917,
+        "producto_sku": "MC000064",
+        "producto_nombre": "BOMBA GASOLINA ELECT 12V 3-4",
+        "producto_stock_actual": "4.00"
+    }
+]

@@ -1,0 +1,5 @@
+*.zip
+APP.zip
+backend.zip
+vendor/
+.env
