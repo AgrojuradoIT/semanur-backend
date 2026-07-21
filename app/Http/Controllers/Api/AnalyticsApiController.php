@@ -199,16 +199,56 @@ class AnalyticsApiController extends Controller
     // Empty bodies returning the EXACT shape asserted by
     // tests/Feature/Api/DashboardAnalyticsTest.php on empty DB.
     // Real aggregation logic is tasks 1.2–1.7 of the dashboard-rework plan.
+
+    /**
+     * SPEC-001 / DA-1.2: OT counts grouped by estado + open-only abiertas
+     * + open-only prioridades + sinMecanico (unassigned) count.
+     *
+     * Driver-agnostic: avoid MySQL-specific aggregations (uses SQLite in tests).
+     * GroupBy/count via Eloquent, 0-fill missing keys in PHP.
+     */
     public function getOtStats(): array
     {
+        // 1. porEstado — group all OTs by estado, 0-fill the 5 canonical keys.
         $porEstado = array_fill_keys(self::OT_ESTADOS, 0);
+        $estadoCounts = OrdenTrabajo::query()
+            ->groupBy('estado')
+            ->selectRaw('estado, COUNT(*) as c')
+            ->pluck('c', 'estado');
+        foreach ($estadoCounts as $estado => $count) {
+            if (array_key_exists($estado, $porEstado)) {
+                $porEstado[$estado] = (int) $count;
+            }
+        }
+
+        // 2. abiertas — count OTs in OT_OPEN_STATES only (Abierta, En Progreso).
+        $abiertas = (int) OrdenTrabajo::query()
+            ->whereIn('estado', self::OT_OPEN_STATES)
+            ->count();
+
+        // 3. prioridades — group by prioridad, filtered to OT_OPEN_STATES only.
         $prioridades = array_fill_keys(self::OT_PRIORIDADES, 0);
+        $prioridadCounts = OrdenTrabajo::query()
+            ->whereIn('estado', self::OT_OPEN_STATES)
+            ->groupBy('prioridad')
+            ->selectRaw('prioridad, COUNT(*) as c')
+            ->pluck('c', 'prioridad');
+        foreach ($prioridadCounts as $prioridad => $count) {
+            if (array_key_exists($prioridad, $prioridades)) {
+                $prioridades[$prioridad] = (int) $count;
+            }
+        }
+
+        // 4. sinMecanico — count OTs where mecanico_asignado_id IS NULL.
+        $sinMecanico = (int) OrdenTrabajo::query()
+            ->whereNull('mecanico_asignado_id')
+            ->count();
 
         return [
             'porEstado' => $porEstado,
-            'abiertas' => 0,
+            'abiertas' => $abiertas,
             'prioridades' => $prioridades,
-            'sinMecanico' => 0,
+            'sinMecanico' => $sinMecanico,
         ];
     }
 
