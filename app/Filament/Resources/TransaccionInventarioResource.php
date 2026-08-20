@@ -4,13 +4,14 @@ namespace App\Filament\Resources;
 
 use App\Filament\Resources\TransaccionInventarioResource\Pages;
 use App\Models\TransaccionInventario;
+use BackedEnum;
+use Filament\Actions;
 use Filament\Forms;
 use Filament\Resources\Resource;
+use Filament\Schemas\Schema;
 use Filament\Tables;
 use Filament\Tables\Table;
-use Filament\Actions;
-use Filament\Schemas\Schema;
-use BackedEnum;
+use Illuminate\Database\Eloquent\Model;
 
 class TransaccionInventarioResource extends Resource
 {
@@ -18,31 +19,52 @@ class TransaccionInventarioResource extends Resource
 
     protected static string | BackedEnum | null $navigationIcon = 'heroicon-o-arrow-trending-up';
 
+    public static function canCreate(): bool
+    {
+        return false;
+    }
+
+    public static function canEdit(Model $record): bool
+    {
+        return false;
+    }
+
+    public static function canDelete(Model $record): bool
+    {
+        return false;
+    }
+
+    public static function canDeleteAny(): bool
+    {
+        return false;
+    }
+
     public static function form(Schema $schema): Schema
     {
         return $schema
             ->schema([
                 Forms\Components\Select::make('producto_id')
                     ->relationship('producto', 'producto_nombre')
-                    ->searchable()
-                    ->preload()
-                    ->required(),
+                    ->disabled(),
+                Forms\Components\Select::make('bodega_id')
+                    ->relationship('bodega', 'nombre')
+                    ->disabled(),
                 Forms\Components\Select::make('usuario_id')
                     ->relationship('usuario', 'name')
-                    ->searchable()
-                    ->preload(),
-                Forms\Components\Select::make('transaccion_tipo')
-                    ->options([
-                        'entrada' => 'Entrada',
-                        'salida' => 'Salida',
-                    ])
-                    ->required(),
+                    ->disabled(),
+                Forms\Components\TextInput::make('transaccion_tipo')
+                    ->disabled(),
                 Forms\Components\TextInput::make('transaccion_cantidad')
                     ->numeric()
-                    ->required(),
+                    ->disabled(),
                 Forms\Components\TextInput::make('transaccion_motivo')
-                    ->maxLength(255),
-                Forms\Components\Textarea::make('transaccion_notas'),
+                    ->disabled(),
+                Forms\Components\TextInput::make('transaccion_referencia_type')
+                    ->disabled(),
+                Forms\Components\TextInput::make('transaccion_referencia_id')
+                    ->disabled(),
+                Forms\Components\Textarea::make('transaccion_notas')
+                    ->disabled(),
             ]);
     }
 
@@ -50,34 +72,55 @@ class TransaccionInventarioResource extends Resource
     {
         return $table
             ->columns([
+                Tables\Columns\TextColumn::make('created_at')
+                    ->label('Fecha')
+                    ->dateTime('d/m/Y H:i')
+                    ->sortable(),
                 Tables\Columns\TextColumn::make('producto.producto_nombre')
+                    ->label('Producto')
+                    ->sortable()
+                    ->searchable(),
+                Tables\Columns\TextColumn::make('bodega.nombre')
+                    ->label('Bodega')
+                    ->placeholder('Global / Sin bodega')
                     ->sortable()
                     ->searchable(),
                 Tables\Columns\TextColumn::make('transaccion_tipo')
+                    ->label('Tipo')
+                    ->badge()
+                    ->color(fn (string $state): string => match (strtolower($state)) {
+                        'ingreso', 'entrada' => 'success',
+                        'salida' => 'danger',
+                        'transferencia' => 'warning',
+                        default => 'gray',
+                    })
                     ->searchable(),
                 Tables\Columns\TextColumn::make('transaccion_cantidad')
-                    ->numeric()
+                    ->label('Cantidad')
+                    ->numeric(2)
                     ->sortable(),
+                Tables\Columns\TextColumn::make('transaccion_motivo')
+                    ->label('Motivo')
+                    ->searchable()
+                    ->toggleable(),
                 Tables\Columns\TextColumn::make('usuario.name')
+                    ->label('Registrado por')
                     ->sortable()
                     ->searchable(),
-                Tables\Columns\TextColumn::make('created_at')
-                    ->dateTime()
-                    ->sortable()
+                Tables\Columns\TextColumn::make('transaccion_notas')
+                    ->label('Notas')
                     ->toggleable(isToggledHiddenByDefault: true),
             ])
             ->filters([
                 //
             ])
             ->recordActions([
-                Actions\EditAction::make(),
-                Actions\DeleteAction::make(),
+                Actions\ViewAction::make(),
             ])
             ->toolbarActions([
-                Actions\BulkActionGroup::make([
-                    Actions\DeleteBulkAction::make(),
-                ]),
-            ]);
+                // Protegido: sin eliminación masiva del libro mayor
+            ])
+            ->defaultSort('created_at', 'desc');
     }
 
     public static function getRelations(): array
@@ -91,8 +134,6 @@ class TransaccionInventarioResource extends Resource
     {
         return [
             'index' => Pages\ListTransaccionInventarios::route('/'),
-            'create' => Pages\CreateTransaccionInventario::route('/create'),
-            'edit' => Pages\EditTransaccionInventario::route('/{record}/edit'),
         ];
     }
 }

@@ -64,6 +64,12 @@ class MovimientoInventarioApiControllerTest extends TestCase
 
         $this->assertSame(5.0, (float) $cantidadEnBodega);
         $this->assertSame(15.0, (float) $producto->fresh()->producto_stock_actual);
+        $this->assertDatabaseHas('transaccion_inventarios', [
+            'producto_id' => $producto->producto_id,
+            'bodega_id' => $bodega->bodega_id,
+            'transaccion_tipo' => 'ingreso',
+            'transaccion_cantidad' => 5,
+        ]);
     }
 
     public function test_transferencia_rejects_invalid_bodega_types(): void
@@ -116,7 +122,7 @@ class MovimientoInventarioApiControllerTest extends TestCase
 
         return Producto::create([
             'categoria_id' => $categoria->categoria_id,
-            'producto_sku' => 'SKU-' . uniqid(),
+            'producto_sku' => 'SKU-'.uniqid(),
             'producto_nombre' => 'Producto test',
             'producto_unidad_medida' => 'unidad',
             'producto_stock_actual' => $stockInicial,
@@ -125,4 +131,3 @@ class MovimientoInventarioApiControllerTest extends TestCase
         ]);
     }
 }
-

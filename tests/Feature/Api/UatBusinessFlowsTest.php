@@ -2,6 +2,7 @@
 
 namespace Tests\Feature\Api;
 
+use App\Models\Bodega;
 use App\Models\Categoria;
 use App\Models\Empleado;
 use App\Models\ItemListaChequeo;
@@ -11,6 +12,7 @@ use App\Models\TransaccionInventario;
 use App\Models\User;
 use App\Models\Vehiculo;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\DB;
 use Laravel\Sanctum\Sanctum;
 use Tests\TestCase;
 
@@ -21,7 +23,10 @@ class UatBusinessFlowsTest extends TestCase
     public function test_uat_work_order_session_and_closure_flow(): void
     {
         $admin = User::factory()->create(['role' => 'admin', 'email' => 'admin@semanur.com']);
-        $mecanicoUser = User::factory()->create(['role' => 'mecanico', 'permisos' => ['taller']]);
+        $mecanicoUser = User::factory()->create([
+            'role' => 'mecanico',
+            'permisos' => ['taller.read', 'taller.write'],
+        ]);
         $mecanicoEmpleado = $this->crearEmpleado($mecanicoUser->id, 'Mecanico Uno', 'Mecanico');
         $vehiculo = $this->crearVehiculo('UAT101');
 
@@ -77,13 +82,18 @@ class UatBusinessFlowsTest extends TestCase
             'notas' => 'Orden ejecutada',
         ])->assertOk();
 
+        // Closing is an audit action; the assigned mechanic only needs taller.read/write
+        // for the work session and can inspect the assigned work-order collection afterwards.
+        Sanctum::actingAs($admin);
         $this->patchJson('/api/ordenes-trabajo/' . $ordenId . '/estado', [
             'estado' => 'Cerrada',
         ])->assertOk();
 
-        $show = $this->getJson('/api/ordenes-trabajo/' . $ordenId);
-        $show->assertOk();
-        $show->assertJsonPath('estado', 'Cerrada');
+        Sanctum::actingAs($mecanicoUser);
+        $ordenes = $this->getJson('/api/ordenes-trabajo');
+        $ordenes->assertOk();
+        $ordenes->assertJsonPath('0.orden_trabajo_id', $ordenId);
+        $ordenes->assertJsonPath('0.estado', 'Cerrada');
     }
 
     public function test_uat_internal_fuel_dispatch_to_employee(): void
@@ -97,6 +107,14 @@ class UatBusinessFlowsTest extends TestCase
             'categoria_tipo' => 'combustible',
         ]);
         $diesel = $this->crearProducto($categoria->categoria_id, 'SKU-UAT-DIESEL', 'Diesel ACPM', 100);
+        $bodega = Bodega::create(['nombre' => 'Bodega Principal', 'tipo' => 'estandar']);
+        DB::table('bodega_producto')->insert([
+            'bodega_id' => $bodega->bodega_id,
+            'producto_id' => $diesel->producto_id,
+            'cantidad' => 100,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
 
         Sanctum::actingAs($admin);
         $response = $this->postJson('/api/combustible', [
@@ -229,4 +247,3 @@ class UatBusinessFlowsTest extends TestCase
         return [$lista, $item];
     }
 }
-

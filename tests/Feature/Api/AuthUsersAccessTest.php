@@ -11,7 +11,7 @@ class AuthUsersAccessTest extends TestCase
 {
     use RefreshDatabase;
 
-    public function test_operador_cannot_access_users_endpoint(): void
+    public function test_legacy_usuarios_permission_does_not_grant_users_read_access(): void
     {
         $operador = User::factory()->create([
             'role' => 'operador',
@@ -26,7 +26,7 @@ class AuthUsersAccessTest extends TestCase
         $response
             ->assertForbidden()
             ->assertJson([
-                'message' => 'No autorizado para consultar usuarios',
+                'message' => 'No tienes el permiso requerido. Necesitas uno de: usuarios.read.',
             ]);
     }
 
@@ -71,7 +71,7 @@ class AuthUsersAccessTest extends TestCase
         $almacenista = User::factory()->create([
             'role' => 'almacenista',
             'email' => 'almacen@semanur.com',
-            'permisos' => ['usuarios'],
+            'permisos' => ['usuarios.read'],
         ]);
 
         Sanctum::actingAs($almacenista);
@@ -81,4 +81,3 @@ class AuthUsersAccessTest extends TestCase
         $response->assertOk();
     }
 }
-

@@ -2,10 +2,14 @@
 
 namespace App\Filament\Resources\RegistroCombustibles\Tables;
 
+use App\Services\CombustibleService;
 use Filament\Actions\BulkActionGroup;
 use Filament\Actions\DeleteBulkAction;
 use Filament\Actions\EditAction;
+use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Table;
+use Illuminate\Database\Eloquent\Collection;
+use Illuminate\Support\Facades\DB;
 
 class RegistroCombustiblesTable
 {
@@ -13,12 +17,12 @@ class RegistroCombustiblesTable
     {
         return $table
             ->columns([
-                \Filament\Tables\Columns\TextColumn::make('fecha')
+                TextColumn::make('fecha')
                     ->label('Fecha')
                     ->dateTime('d/m/Y H:i')
                     ->sortable()
                     ->searchable(),
-                \Filament\Tables\Columns\TextColumn::make('tipo_combustible')
+                TextColumn::make('tipo_combustible')
                     ->label('Combustible')
                     ->badge()
                     ->color(fn (string $state): string => match ($state) {
@@ -26,26 +30,26 @@ class RegistroCombustiblesTable
                         'acpm' => 'warning',
                         default => 'gray',
                     }),
-                \Filament\Tables\Columns\TextColumn::make('tipo_destino')
+                TextColumn::make('tipo_destino')
                     ->label('Destino')
                     ->badge(),
-                \Filament\Tables\Columns\TextColumn::make('vehiculo.placa')
+                TextColumn::make('vehiculo.placa')
                     ->label('Vehículo')
                     ->searchable()
                     ->toggleable(),
-                \Filament\Tables\Columns\TextColumn::make('empleado.nombres')
+                TextColumn::make('empleado.nombres')
                     ->label('Responsable')
                     ->searchable()
                     ->toggleable(),
-                \Filament\Tables\Columns\TextColumn::make('tercero_nombre')
+                TextColumn::make('tercero_nombre')
                     ->label('Tercero')
                     ->searchable()
                     ->toggleable(),
-                \Filament\Tables\Columns\TextColumn::make('cantidad_galones')
+                TextColumn::make('cantidad_galones')
                     ->label('Galones')
                     ->numeric(2)
                     ->sortable(),
-                \Filament\Tables\Columns\TextColumn::make('usuario.name')
+                TextColumn::make('usuario.name')
                     ->label('Registrado por')
                     ->searchable()
                     ->sortable()
@@ -59,7 +63,16 @@ class RegistroCombustiblesTable
             ])
             ->toolbarActions([
                 BulkActionGroup::make([
-                    DeleteBulkAction::make(),
+                    DeleteBulkAction::make()
+                        ->using(function (Collection $records): void {
+                            DB::transaction(function () use ($records): void {
+                                $service = app(CombustibleService::class);
+
+                                foreach ($records as $record) {
+                                    $service->destroyRegistro($record, auth()->id());
+                                }
+                            });
+                        }),
                 ]),
             ])
             ->defaultSort('fecha', 'desc');

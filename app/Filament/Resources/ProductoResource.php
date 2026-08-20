@@ -35,8 +35,12 @@ class ProductoResource extends Resource
                 Forms\Components\TextInput::make('producto_unidad_medida')
                     ->maxLength(255),
                 Forms\Components\TextInput::make('producto_stock_actual')
+                    ->label('Stock Actual')
                     ->numeric()
-                    ->default(0),
+                    ->default(0)
+                    ->disabled()
+                    ->dehydrated(false)
+                    ->helperText('Solo lectura. El stock se actualiza automáticamente mediante movimientos de inventario.'),
                 Forms\Components\TextInput::make('producto_precio_costo')
                     ->numeric()
                     ->prefix('$'),

@@ -294,6 +294,9 @@ class ComprasImportService
                 }
                 $createdProducts = count($newProductRows);
 
+                $bodegaId = \App\Models\Bodega::where('tipo', 'estandar')->value('bodega_id') 
+                    ?? \App\Models\Bodega::value('bodega_id');
+
                 // Obtener IDs de productos recién creados por SKU
                 $movementRows = [];
                 $quantitiesToAdd = [];
@@ -307,6 +310,7 @@ class ComprasImportService
                         $quantitiesToAdd[$productoId] = ($quantitiesToAdd[$productoId] ?? 0.0) + $qty;
                         $movementRows[] = [
                             'producto_id' => $productoId,
+                            'bodega_id' => $bodegaId,
                             'usuario_id' => $userId,
                             'transaccion_tipo' => 'ingreso',
                             'transaccion_cantidad' => $qty,
@@ -327,6 +331,7 @@ class ComprasImportService
                     $quantitiesToAdd[$productoId] = ($quantitiesToAdd[$productoId] ?? 0.0) + $qty;
                     $movementRows[] = [
                         'producto_id' => $productoId,
+                        'bodega_id' => $bodegaId,
                         'usuario_id' => $userId,
                         'transaccion_tipo' => 'ingreso',
                         'transaccion_cantidad' => $qty,
@@ -346,7 +351,7 @@ class ComprasImportService
                 }
                 $movementsCreated = count($movementRows);
 
-                // --- 3) Incrementar stock_actual de productos afectados ---
+                // --- 3) Incrementar stock_actual de productos afectados y sincronizar bodega_producto ---
                 if (!empty($quantitiesToAdd)) {
                     ksort($quantitiesToAdd);
                     $cases = [];
@@ -354,6 +359,14 @@ class ComprasImportService
                     foreach ($quantitiesToAdd as $prodId => $qty) {
                         $cases[] = "WHEN " . (int)$prodId . " THEN " . (float)$qty;
                         $ids[] = (int)$prodId;
+
+                        if ($bodegaId !== null) {
+                            \DB::statement("
+                                INSERT INTO bodega_producto (bodega_id, producto_id, cantidad, created_at, updated_at)
+                                VALUES (?, ?, ?, NOW(), NOW())
+                                ON DUPLICATE KEY UPDATE cantidad = cantidad + VALUES(cantidad), updated_at = NOW()
+                            ", [$bodegaId, (int) $prodId, (float) $qty]);
+                        }
                     }
                     $idsString = implode(',', $ids);
                     $casesString = implode(' ', $cases);

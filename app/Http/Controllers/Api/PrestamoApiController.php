@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Models\Bodega;
 use App\Models\Empleado;
 use App\Models\PrestamoHerramienta;
 use App\Models\Producto;
@@ -40,11 +41,13 @@ class PrestamoApiController extends Controller
         $mecanicoId = (int) $request->mecanico_id;
 
         return DB::transaction(function () use ($request, $mecanicoId) {
-            $producto = Producto::find($request->producto_id);
+            $producto = Producto::lockForUpdate()->find($request->producto_id);
 
             if ($producto->producto_stock_actual < $request->prestamo_cantidad) {
                 return response()->json(['message' => 'Stock insuficiente para el prestamo'], 422);
             }
+
+            $bodegaId = Bodega::where('tipo', 'estandar')->value('bodega_id') ?? Bodega::value('bodega_id');
 
             $prestamo = PrestamoHerramienta::create([
                 'producto_id' => $request->producto_id,
@@ -58,6 +61,7 @@ class PrestamoApiController extends Controller
 
             TransaccionInventario::create([
                 'producto_id' => $request->producto_id,
+                'bodega_id' => $bodegaId,
                 'usuario_id' => $request->user()->id,
                 'transaccion_tipo' => 'salida',
                 'transaccion_cantidad' => $request->prestamo_cantidad,
@@ -97,14 +101,26 @@ class PrestamoApiController extends Controller
             $prestamo->save();
 
             if ($request->estado === 'devuelto') {
+                $salidaOriginal = TransaccionInventario::where('transaccion_referencia_type', 'PrestamoHerramienta')
+                    ->where('transaccion_referencia_id', $prestamo->prestamo_id)
+                    ->where('transaccion_tipo', 'salida')
+                    ->first();
+
+                $bodegaId = $salidaOriginal?->bodega_id 
+                    ?? Bodega::where('tipo', 'estandar')->value('bodega_id') 
+                    ?? Bodega::value('bodega_id');
+
                 TransaccionInventario::create([
+                    'reverses_transaction_id' => $salidaOriginal?->transaccion_id,
                     'producto_id' => $prestamo->producto_id,
+                    'bodega_id' => $bodegaId,
                     'usuario_id' => $request->user()->id,
                     'transaccion_tipo' => 'ingreso',
                     'transaccion_cantidad' => $prestamo->prestamo_cantidad,
                     'transaccion_motivo' => 'Devolucion de Herramienta',
                     'transaccion_referencia_id' => $prestamo->prestamo_id,
                     'transaccion_referencia_type' => 'PrestamoHerramienta',
+                    'transaccion_notas' => "Devolución de herramienta de préstamo #{$prestamo->prestamo_id}",
                 ]);
             }
 

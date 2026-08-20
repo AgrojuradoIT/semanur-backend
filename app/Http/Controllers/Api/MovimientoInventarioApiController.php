@@ -6,9 +6,9 @@ use App\Http\Controllers\Controller;
 use App\Models\Bodega;
 use App\Models\Producto;
 use App\Models\TransaccionInventario;
+use App\Services\NotificacionService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
-use App\Services\NotificacionService;
 
 class MovimientoInventarioApiController extends Controller
 {
@@ -52,7 +52,7 @@ class MovimientoInventarioApiController extends Controller
                 $origen = Bodega::find($bodegaOrigenId);
                 $destino = Bodega::find($bodegaDestinoId);
 
-                if (!$origen || !$destino) {
+                if (! $origen || ! $destino) {
                     return response()->json([
                         'message' => 'Bodega de origen o destino no encontrada',
                     ], 422);
@@ -65,7 +65,7 @@ class MovimientoInventarioApiController extends Controller
                 }
             } else {
                 $bodegaId = $request->bodega_id;
-                if (!$bodegaId) {
+                if (! $bodegaId) {
                     $bodegaPrincipal = Bodega::firstOrCreate(
                         ['tipo' => 'estandar'],
                         ['nombre' => 'Bodega Principal', 'descripcion' => 'Bodega central por defecto']
@@ -87,7 +87,7 @@ class MovimientoInventarioApiController extends Controller
                     ->value('cantidad') ?? 0;
 
                 // Si no hay registro en bodega, usar el stock del producto directamente
-                if (!$stockOrigen && !DB::table('bodega_producto')
+                if (! $stockOrigen && ! DB::table('bodega_producto')
                     ->where('bodega_id', $bodegaOrigenId)
                     ->where('producto_id', $producto->producto_id)
                     ->exists()) {
@@ -110,7 +110,7 @@ class MovimientoInventarioApiController extends Controller
                 }
 
                 // Sincronizar bodega_producto si no existe
-                if (!DB::table('bodega_producto')
+                if (! DB::table('bodega_producto')
                     ->where('bodega_id', $bodegaOrigenId)
                     ->where('producto_id', $producto->producto_id)
                     ->exists()) {
@@ -124,15 +124,20 @@ class MovimientoInventarioApiController extends Controller
                 }
             }
 
-            if ($bodegaOrigenId) {
+            if ($request->transaccion_tipo === 'transferencia') {
                 $this->updateBodegaStock($bodegaOrigenId, $producto->producto_id, -$request->transaccion_cantidad);
-            }
-            if ($bodegaDestinoId) {
                 $this->updateBodegaStock($bodegaDestinoId, $producto->producto_id, $request->transaccion_cantidad);
             }
 
+            $ledgerBodegaId = match ($request->transaccion_tipo) {
+                'ingreso' => $bodegaDestinoId,
+                'salida' => $bodegaOrigenId,
+                default => null,
+            };
+
             $movimiento = TransaccionInventario::create([
                 'producto_id' => $request->producto_id,
+                'bodega_id' => $ledgerBodegaId,
                 'usuario_id' => $request->user()->id,
                 'transaccion_tipo' => $request->transaccion_tipo,
                 'transaccion_cantidad' => $request->transaccion_cantidad,
@@ -178,6 +183,7 @@ class MovimientoInventarioApiController extends Controller
                     'cantidad' => $bodegaProducto->cantidad + $cantidadCambio,
                     'updated_at' => now(),
                 ]);
+
             return;
         }
 
@@ -190,4 +196,3 @@ class MovimientoInventarioApiController extends Controller
         ]);
     }
 }
-

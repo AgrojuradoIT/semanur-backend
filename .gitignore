@@ -3,3 +3,12 @@ APP.zip
 backend.zip
 vendor/
 .env
+.phpunit.result.cache
+storage/framework/sessions/*
+storage/framework/views/*
+storage/framework/cache/*
+storage/logs/*
+!storage/framework/sessions/.gitignore
+!storage/framework/views/.gitignore
+!storage/framework/cache/.gitignore
+!storage/logs/.gitignore

@@ -9,6 +9,7 @@ class TransaccionInventario extends Model
     protected $primaryKey = 'transaccion_id';
 
     protected $fillable = [
+        'reverses_transaction_id',
         'producto_id',
         'bodega_id',
         'usuario_id',

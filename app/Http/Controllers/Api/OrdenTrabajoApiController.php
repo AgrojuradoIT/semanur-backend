@@ -398,7 +398,7 @@ class OrdenTrabajoApiController extends Controller
             return response()->json(['message' => 'No autorizado para eliminar órdenes de trabajo'], 403);
         }
 
-        return DB::transaction(function () use ($id) {
+        return DB::transaction(function () use ($id, $user) {
             $orden = OrdenTrabajo::find($id);
 
             if (!$orden) {
@@ -411,8 +411,29 @@ class OrdenTrabajoApiController extends Controller
                 ], 409);
             }
 
+            // Revertir salidas de inventario asociadas mediante contraasientos
+            $bodegaId = $this->resolveDefaultBodegaId();
+            $movimientos = TransaccionInventario::where('transaccion_referencia_type', 'OrdenTrabajo')
+                ->where('transaccion_referencia_id', $orden->orden_trabajo_id)
+                ->where('transaccion_tipo', 'salida')
+                ->get();
+
+            foreach ($movimientos as $mov) {
+                TransaccionInventario::create([
+                    'reverses_transaction_id' => $mov->transaccion_id,
+                    'producto_id' => $mov->producto_id,
+                    'bodega_id' => $mov->bodega_id ?? $bodegaId,
+                    'usuario_id' => $user->id,
+                    'transaccion_tipo' => 'ingreso',
+                    'transaccion_cantidad' => $mov->transaccion_cantidad,
+                    'transaccion_motivo' => 'Reversión por eliminación de OT',
+                    'transaccion_referencia_id' => $orden->orden_trabajo_id,
+                    'transaccion_referencia_type' => 'OrdenTrabajo',
+                    'transaccion_notas' => "Reintegro de repuesto por eliminación de OT #{$orden->orden_trabajo_id}",
+                ]);
+            }
+
             $orden->sesiones()->delete();
-            $orden->movimientos_inventario()->delete();
             $orden->delete();
 
             return response()->json(['message' => 'Orden de trabajo eliminada correctamente']);

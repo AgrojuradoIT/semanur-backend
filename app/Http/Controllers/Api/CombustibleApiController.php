@@ -4,6 +4,10 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Http\Requests\CombustibleRequest;
+use App\Http\Requests\UpdateCombustibleRequest;
+use App\Models\Bodega;
+use App\Models\BodegaProducto;
+use App\Models\Producto;
 use App\Models\RegistroCombustible;
 use App\Models\TransaccionInventario;
 use App\Services\CombustibleService;
@@ -37,8 +41,38 @@ class CombustibleApiController extends Controller
         if ($request->filled('fecha_hasta')) {
             $query->where('fecha', '<=', Carbon::parse($request->fecha_hasta)->endOfDay());
         }
+        if ($request->filled('search')) {
+            $search = trim($request->search);
+            $query->where(function ($q) use ($search) {
+                $q->whereHas('vehiculo', function ($vq) use ($search) {
+                    $vq->where('placa', 'like', "%{$search}%")
+                        ->orWhere('marca', 'like', "%{$search}%");
+                })->orWhereHas('empleado', function ($eq) use ($search) {
+                    $eq->where('name', 'like', "%{$search}%")
+                        ->orWhere('nombre', 'like', "%{$search}%");
+                })->orWhere('tercero_nombre', 'like', "%{$search}%")
+                  ->orWhere('labor', 'like', "%{$search}%")
+                  ->orWhere('notas', 'like', "%{$search}%")
+                  ->orWhere('estacion_servicio', 'like', "%{$search}%")
+                  ->orWhere('placa_manual', 'like', "%{$search}%");
+            });
+        }
+        $perPageParam = $request->get('per_page', 25);
+        if ($perPageParam === 'all' || (int) $perPageParam >= 9999 || $request->boolean('all')) {
+            $items = $query->get();
 
-        $perPage = min((int) $request->get('per_page', 25), 100);
+            return response()->json([
+                'data' => $items,
+                'meta' => [
+                    'current_page' => 1,
+                    'last_page' => 1,
+                    'per_page' => $items->count(),
+                    'total' => $items->count(),
+                ],
+            ]);
+        }
+
+        $perPage = min(max((int) $perPageParam, 1), 500);
         $paginated = $query->paginate($perPage);
 
         return response()->json([
@@ -83,13 +117,18 @@ class CombustibleApiController extends Controller
             return DB::transaction(function () use ($request) {
                 $empleadoId = in_array($request->tipo_destino, ['vehiculo', 'maquinaria', 'equipo_menor']) ? $request->empleado_id : null;
 
-                $producto = $this->combustibleService->resolveCombustibleProducto($request->tipo_combustible);
+                $resolvedProduct = $this->combustibleService->resolveCombustibleProducto($request->tipo_combustible);
 
-                if (!$producto) {
+                if (! $resolvedProduct) {
                     return response()->json([
                         'message' => "No se encontró el producto de combustible ({$request->tipo_combustible}). Verifique el inventario.",
                     ], 422);
                 }
+
+                $producto = Producto::query()
+                    ->whereKey($resolvedProduct->producto_id)
+                    ->lockForUpdate()
+                    ->firstOrFail();
 
                 if ($producto->producto_stock_actual < $request->cantidad_galones) {
                     return response()->json([
@@ -104,11 +143,28 @@ class CombustibleApiController extends Controller
                     $request->labor,
                 );
 
-                $bodegaId = $this->resolveDefaultBodegaId();
+                $bodega = $this->resolveDefaultBodega();
+                $bodegaStock = BodegaProducto::query()
+                    ->where('bodega_id', $bodega->bodega_id)
+                    ->where('producto_id', $producto->producto_id)
+                    ->lockForUpdate()
+                    ->first();
+
+                if (! $bodegaStock) {
+                    return response()->json([
+                        'message' => "El producto {$request->tipo_combustible} no tiene saldo configurado en {$bodega->nombre}.",
+                    ], 422);
+                }
+
+                if ((float) $bodegaStock->cantidad < (float) $request->cantidad_galones) {
+                    return response()->json([
+                        'message' => "Stock insuficiente de {$request->tipo_combustible} en {$bodega->nombre}. Stock actual: {$bodegaStock->cantidad}",
+                    ], 422);
+                }
 
                 $transaccion = TransaccionInventario::create([
                     'producto_id' => $producto->producto_id,
-                    'bodega_id' => $bodegaId,
+                    'bodega_id' => $bodega->bodega_id,
                     'usuario_id' => $request->user()->id,
                     'transaccion_tipo' => 'salida',
                     'transaccion_cantidad' => $request->cantidad_galones,
@@ -143,10 +199,11 @@ class CombustibleApiController extends Controller
                 ], 201);
             });
         } catch (\Exception $e) {
-            \Log::error("Error en CombustibleApiController@store: " . $e->getMessage(), [
+            \Log::error('Error en CombustibleApiController@store: '.$e->getMessage(), [
                 'exception' => $e,
                 'request' => $request->all(),
             ]);
+
             return response()->json([
                 'message' => 'Error interno al registrar abastecimiento',
                 'error' => $e->getMessage(),
@@ -154,82 +211,41 @@ class CombustibleApiController extends Controller
         }
     }
 
-    public function update(Request $request, $id)
+    public function update(UpdateCombustibleRequest $request, $id)
     {
         $registro = RegistroCombustible::find($id);
 
-        if (!$registro) {
+        if (! $registro) {
             return response()->json(['message' => 'Registro no encontrado'], 404);
         }
 
-        $validated = $request->validate([
-            'tipo_combustible' => ['sometimes', 'in:gasolina,acpm'],
-            'cantidad_galones' => ['sometimes', 'numeric', 'min:0.01'],
-            'valor_total' => ['nullable', 'numeric', 'min:0'],
-            'horometro_actual' => ['nullable', 'numeric'],
-            'kilometraje_actual' => ['nullable', 'numeric'],
-            'estacion_servicio' => ['nullable', 'string'],
-            'notas' => ['nullable', 'string'],
-            'labor' => ['nullable', 'string'],
-            'tipo_destino' => ['sometimes', \Illuminate\Validation\Rule::in(['vehiculo', 'empleado', 'tercero', 'equipo_menor', 'maquinaria'])],
-            'vehiculo_id' => ['nullable', 'exists:vehiculos,vehiculo_id'],
-            'empleado_id' => ['nullable', 'exists:empleados,id'],
-            'tercero_nombre' => ['nullable', 'string'],
-            'placa_manual' => ['nullable', 'string'],
-        ]);
-
-        $registro->update($validated);
+        $result = $this->combustibleService->updateRegistro(
+            $registro,
+            $request->validated(),
+            $request->user()?->id,
+        );
 
         return response()->json([
             'message' => 'Registro actualizado con éxito',
-            'registro' => $registro->load(['vehiculo', 'empleado', 'usuario']),
+            'ajuste_inventario' => $result['inventory_adjusted'],
+            'registro' => $result['registro'],
         ]);
     }
 
-    public function destroy($id)
+    public function destroy(Request $request, $id)
     {
         $registro = RegistroCombustible::find($id);
 
-        if (!$registro) {
+        if (! $registro) {
             return response()->json(['message' => 'Registro no encontrado'], 404);
         }
 
-        return DB::transaction(function () use ($registro) {
-            $transaccion = null;
+        $this->combustibleService->destroyRegistro($registro, $request->user()?->id);
 
-            if ($registro->transaccion_id) {
-                $transaccion = TransaccionInventario::find($registro->transaccion_id);
-            }
-
-            if (!$transaccion) {
-                $transaccion = TransaccionInventario::where('transaccion_motivo', 'Consumo de Combustible (Interno)')
-                    ->where('transaccion_tipo', 'salida')
-                    ->where('transaccion_cantidad', $registro->cantidad_galones)
-                    ->where('created_at', '>=', $registro->created_at->copy()->subMinute())
-                    ->where('created_at', '<=', $registro->created_at->copy()->addMinute())
-                    ->first();
-            }
-
-            if ($transaccion) {
-                TransaccionInventario::create([
-                    'producto_id' => $transaccion->producto_id,
-                    'bodega_id' => $transaccion->bodega_id,
-                    'usuario_id' => auth()->id(),
-                    'transaccion_tipo' => 'ingreso',
-                    'transaccion_cantidad' => $transaccion->transaccion_cantidad,
-                    'transaccion_motivo' => 'Reversión por eliminación de tanqueo',
-                    'transaccion_referencia_type' => 'combustible',
-                    'transaccion_referencia_id' => $registro->registro_id,
-                    'transaccion_notas' => "Reversión automática del registro #{$registro->registro_id}",
-                ]);
-            }
-
-            $registro->delete();
-
-            return response()->json([
-                'message' => 'Registro eliminado' . ($transaccion ? ' y stock revertido' : ''),
-            ]);
-        });
+        return response()->json([
+            'message' => 'Registro eliminado y stock revertido',
+            'inventario_revertido' => true,
+        ]);
     }
 
     public function reportes(Request $request)
@@ -281,7 +297,7 @@ class CombustibleApiController extends Controller
             'consumo_por_tipo_destino' => $general['consumo_por_tipo_destino'],
             'top_consumidores' => $general['top_consumidores'],
             'consumo_por_dia_semana' => $general['consumo_por_dia_semana'],
-            
+
             'kpis_gasolina' => $gasolina['kpis'],
             'consumo_por_tipo_destino_gasolina' => $gasolina['consumo_por_tipo_destino'],
             'top_consumidores_gasolina' => $gasolina['top_consumidores'],
@@ -292,7 +308,7 @@ class CombustibleApiController extends Controller
             'top_consumidores_acpm' => $acpm['top_consumidores'],
             'consumo_por_dia_semana_acpm' => $acpm['consumo_por_dia_semana'],
 
-            'consumo_diario' => $consumoDiario
+            'consumo_diario' => $consumoDiario,
         ]);
     }
 
@@ -319,8 +335,8 @@ class CombustibleApiController extends Controller
             'vehiculos_unicos' => $vehiculosUnicos,
             'top_dia' => $topDia ? [
                 'fecha' => $topDia->fecha_dia,
-                'galones' => round($topDia->total_galones, 2)
-            ] : null
+                'galones' => round($topDia->total_galones, 2),
+            ] : null,
         ];
 
         $destino = (clone $query)
@@ -335,7 +351,7 @@ class CombustibleApiController extends Controller
                 return [
                     'tipo_destino' => $item->tipo_destino,
                     'galones' => round($item->galones, 2),
-                    'registros' => $item->registros
+                    'registros' => $item->registros,
                 ];
             });
 
@@ -357,9 +373,9 @@ class CombustibleApiController extends Controller
         $topConsumers = $topConsumersRaw->map(function ($item) {
             $nombre = '';
             if ($item->vehiculo) {
-                $nombre = ($item->vehiculo->placa ?? '') . ' (' . ($item->vehiculo->nombre ?? $item->vehiculo->marca ?? '') . ')';
+                $nombre = ($item->vehiculo->placa ?? '').' ('.($item->vehiculo->nombre ?? $item->vehiculo->marca ?? '').')';
             } elseif ($item->tipo_destino === 'empleado' && $item->tercero_nombre) {
-                $nombre = $item->tercero_nombre . ($item->placa_manual ? " - {$item->placa_manual}" : '');
+                $nombre = $item->tercero_nombre.($item->placa_manual ? " - {$item->placa_manual}" : '');
             } elseif ($item->tercero_nombre) {
                 $nombre = $item->tercero_nombre;
             } elseif ($item->placa_manual) {
@@ -371,7 +387,7 @@ class CombustibleApiController extends Controller
             return [
                 'destino' => $nombre,
                 'galones' => round($item->galones, 2),
-                'registros' => $item->registros
+                'registros' => $item->registros,
             ];
         });
 
@@ -391,14 +407,15 @@ class CombustibleApiController extends Controller
             4 => 'Miércoles',
             5 => 'Jueves',
             6 => 'Viernes',
-            7 => 'Sábado'
+            7 => 'Sábado',
         ];
 
         $consumoPorDiaSemana = collect($diasLabels)->map(function ($label, $num) use ($consumoSemanal) {
             $match = $consumoSemanal->firstWhere('dia_num', $num);
+
             return [
                 'dia' => $label,
-                'galones' => $match ? round($match->galones, 2) : 0
+                'galones' => $match ? round($match->galones, 2) : 0,
             ];
         })->values();
 
@@ -406,12 +423,15 @@ class CombustibleApiController extends Controller
             'kpis' => $kpis,
             'consumo_por_tipo_destino' => $destino,
             'top_consumidores' => $topConsumers,
-            'consumo_por_dia_semana' => $consumoPorDiaSemana
+            'consumo_por_dia_semana' => $consumoPorDiaSemana,
         ];
     }
 
-    private function resolveDefaultBodegaId(): ?int
+    private function resolveDefaultBodega(): Bodega
     {
-        return \App\Models\Bodega::value('bodega_id');
+        return Bodega::query()->firstOrCreate(
+            ['tipo' => 'estandar'],
+            ['nombre' => 'Bodega Principal', 'descripcion' => 'Bodega central por defecto'],
+        );
     }
 }
