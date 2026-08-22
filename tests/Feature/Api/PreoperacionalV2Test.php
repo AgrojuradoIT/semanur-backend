@@ -14,6 +14,7 @@ use App\Models\Vehiculo;
 use Carbon\Carbon;
 use Database\Seeders\ListaChequeoSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Str;
 use Laravel\Sanctum\Sanctum;
 use Tests\TestCase;
 
@@ -535,6 +536,7 @@ class PreoperacionalV2Test extends TestCase
             ['respuestas' => $respuestas]
         );
         $response->assertOk();
+        $responseIds = collect($response->json('data.responses'))->pluck('id')->sort()->values()->all();
 
         // Second submission without force=true — should return 409
         $response = $this->postJson(
@@ -543,6 +545,34 @@ class PreoperacionalV2Test extends TestCase
         );
         $response->assertConflict(); // 409
         $response->assertJsonPath('message', 'Daily form for lunes is already completed. Use ?force=true to override.');
+
+        // A queued client can attach an operation UUID and recover the exact
+        // response IDs after an ambiguous/lost first response.
+        $operationId = (string) Str::uuid();
+        $response = $this->postJson(
+            "/api/v2/preoperacionales/semanas/{$semana->id}/dias/lunes",
+            [
+                'client_operation_id' => $operationId,
+                'respuestas' => $respuestas,
+            ]
+        );
+        $response->assertOk()
+            ->assertJsonPath('replayed', true)
+            ->assertJsonPath('client_operation_id', strtolower($operationId));
+        $this->assertSame(
+            $responseIds,
+            collect($response->json('data.responses'))->pluck('id')->sort()->values()->all(),
+        );
+
+        $changed = $respuestas;
+        $changed[0]['estado'] = 'M';
+        $this->postJson(
+            "/api/v2/preoperacionales/semanas/{$semana->id}/dias/lunes",
+            [
+                'client_operation_id' => $operationId,
+                'respuestas' => $changed,
+            ]
+        )->assertConflict();
 
         // With force=true — should succeed
         $response = $this->postJson(

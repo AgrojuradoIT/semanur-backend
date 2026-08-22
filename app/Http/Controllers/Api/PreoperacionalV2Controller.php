@@ -10,24 +10,35 @@ use App\Models\PreoperacionalSemana;
 use App\Models\PreoperacionalTemplate;
 use App\Models\PreoperacionalTemplateItem;
 use App\Models\Vehiculo;
+use App\Services\Authorization\OperationalAccess;
 use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\ValidationException;
+use Illuminate\Validation\Rule;
 
 class PreoperacionalV2Controller extends Controller
 {
+    public function __construct(
+        private readonly OperationalAccess $access,
+    ) {}
+
     /**
      * GET /api/v2/preoperacionales/templates
      * Return active templates with sections and items nested.
      */
     public function templates(Request $request): JsonResponse
     {
+        $validated = $request->validate([
+            'tipo_vehiculo' => ['nullable', 'string', 'max:50'],
+        ]);
+
         $query = PreoperacionalTemplate::with(['sections.items', 'items'])
             ->where('activo', true);
 
-        if ($request->filled('tipo_vehiculo')) {
-            $tipo = strtolower(trim($request->tipo_vehiculo));
+        if (isset($validated['tipo_vehiculo']) && $validated['tipo_vehiculo'] !== '') {
+            $tipo = strtolower(trim($validated['tipo_vehiculo']));
             $templates = $query->where('tipo_vehiculo', $tipo)->get();
 
             // Fallback to 'generico' if no exact match
@@ -52,15 +63,27 @@ class PreoperacionalV2Controller extends Controller
      */
     public function pendientesHoy(Request $request): JsonResponse
     {
-        $fecha = $request->filled('fecha')
-            ? Carbon::parse($request->fecha)
+        $validated = $request->validate([
+            'fecha' => ['nullable', 'date'],
+        ]);
+
+        $fecha = isset($validated['fecha'])
+            ? Carbon::parse($validated['fecha'])
             : Carbon::today();
 
         $diaSemana = $this->dateToDiaSemana($fecha);
         $semanaInicio = $fecha->copy()->startOfWeek(Carbon::MONDAY)->format('Y-m-d');
 
-        // Find all active vehicles
-        $vehiculos = Vehiculo::whereNotNull('tipo')->get();
+        // Non-supervisors may only inspect the vehicle assigned to their
+        // operational employee identity.
+        $vehiclesQuery = Vehiculo::query()->whereNotNull('tipo');
+        if (! $this->access->isSupervisor($request->user())) {
+            $employeeId = $this->access->employeeId($request->user());
+            $employeeId === null
+                ? $vehiclesQuery->whereRaw('1 = 0')
+                : $vehiclesQuery->where('operador_asignado_id', $employeeId);
+        }
+        $vehiculos = $vehiclesQuery->get();
 
         // Pre-load active templates
         $templatesByTipo = PreoperacionalTemplate::where('activo', true)->get()->groupBy('tipo_vehiculo');
@@ -77,7 +100,7 @@ class PreoperacionalV2Controller extends Controller
             ->toArray();
 
         // Index semanas by vehicle_id and template_id for in-memory lookup
-        $semanasIndex = $semanas->groupBy(fn($s) => $s->vehiculo_id . '-' . $s->template_id);
+        $semanasIndex = $semanas->groupBy(fn ($s) => $s->vehiculo_id.'-'.$s->template_id);
 
         $pendientes = [];
 
@@ -86,12 +109,12 @@ class PreoperacionalV2Controller extends Controller
             $template = $templatesByTipo->get($vehiculo->tipo)?->first()
                 ?? $templatesByTipo->get('generico')?->first();
 
-            if (!$template) {
+            if (! $template) {
                 continue;
             }
 
             // Find matching week record in memory
-            $semana = $semanasIndex->get($vehiculo->vehiculo_id . '-' . $template->id)?->first();
+            $semana = $semanasIndex->get($vehiculo->vehiculo_id.'-'.$template->id)?->first();
 
             // Check if today's daily form is already completed in memory
             $dailyCompleted = false;
@@ -101,7 +124,7 @@ class PreoperacionalV2Controller extends Controller
                 }
             }
 
-            if (!$dailyCompleted) {
+            if (! $dailyCompleted) {
                 $pendientes[] = [
                     'vehiculo_id' => $vehiculo->vehiculo_id,
                     'placa' => $vehiculo->placa,
@@ -123,28 +146,48 @@ class PreoperacionalV2Controller extends Controller
     public function storeSemana(Request $request): JsonResponse
     {
         $validated = $request->validate([
-            'vehiculo_id' => 'required|exists:vehiculos,vehiculo_id',
-            'template_id' => 'nullable|exists:preoperacional_templates,id',
-            'inspector_id' => 'required|exists:empleados,id',
-            'semana_inicio' => 'required|date',
+            'vehiculo_id' => ['required', 'integer', 'exists:vehiculos,vehiculo_id'],
+            'template_id' => [
+                'nullable',
+                'integer',
+                Rule::exists('preoperacional_templates', 'id')->where('activo', true),
+            ],
+            'inspector_id' => [
+                'required',
+                'integer',
+                Rule::exists('empleados', 'id')->where('estado', 'activo'),
+            ],
+            'semana_inicio' => ['required', 'date'],
         ]);
 
-        return DB::transaction(function () use ($validated) {
-            $vehiculo = Vehiculo::where('vehiculo_id', $validated['vehiculo_id'])->firstOrFail();
-            $inspector = Empleado::findOrFail($validated['inspector_id']);
+        $vehiculo = Vehiculo::where('vehiculo_id', $validated['vehiculo_id'])->firstOrFail();
+        $inspector = Empleado::findOrFail($validated['inspector_id']);
+
+        if (! $this->access->isSupervisor($request->user())) {
+            $employeeId = $this->access->employeeId($request->user());
+            abort_unless(
+                $employeeId !== null
+                    && $employeeId === (int) $inspector->getKey()
+                    && $this->access->canUseVehicleForChecklist($request->user(), $vehiculo),
+                403,
+                'No autorizado para crear un preoperacional para otro inspector o vehículo.',
+            );
+        }
+
+        return DB::transaction(function () use ($validated, $vehiculo, $inspector) {
 
             // Auto-resolve template if not provided
             $templateId = $validated['template_id'] ?? null;
-            if (!$templateId) {
+            if (! $templateId) {
                 $template = PreoperacionalTemplate::where('activo', true)
                     ->where('tipo_vehiculo', $vehiculo->tipo)
                     ->first();
-                if (!$template) {
+                if (! $template) {
                     $template = PreoperacionalTemplate::where('activo', true)
                         ->where('tipo_vehiculo', 'generico')
                         ->first();
                 }
-                if (!$template) {
+                if (! $template) {
                     return response()->json([
                         'message' => 'No template found for vehicle type and no generic fallback available.',
                     ], 422);
@@ -166,7 +209,7 @@ class PreoperacionalV2Controller extends Controller
             if ($existing) {
                 return response()->json([
                     'message' => 'Weekly form already exists for this vehicle and week.',
-                    'data' => $this->formatSemana($existing->load(['dailyForms.responses.item', 'template.sections.items', 'template.items'])),
+                    'data' => $this->formatSemana($existing->load(['dailyForms.responses.item', 'dailyForms.responses.evidence', 'template.sections.items', 'template.items'])),
                 ], 409);
             }
 
@@ -208,15 +251,22 @@ class PreoperacionalV2Controller extends Controller
      * GET /api/v2/preoperacionales/semanas/{id}
      * Return full weekly form with daily forms and responses.
      */
-    public function showSemana(int $id): JsonResponse
+    public function showSemana(Request $request, int $id): JsonResponse
     {
         $semana = PreoperacionalSemana::with([
             'dailyForms.responses.item',
+            'dailyForms.responses.evidence',
             'template.sections.items',
             'template.items',
             'vehiculo',
             'inspector',
         ])->findOrFail($id);
+
+        abort_unless(
+            $this->access->canAccessPreoperational($request->user(), $semana),
+            403,
+            'No autorizado para consultar este preoperacional.',
+        );
 
         return response()->json($this->formatSemana($semana));
     }
@@ -228,40 +278,68 @@ class PreoperacionalV2Controller extends Controller
     public function submitDailyForm(int $semanaId, string $diaSemana, Request $request): JsonResponse
     {
         $validated = $request->validate([
-            'respuestas' => 'required|array',
-            'respuestas.*.item_id' => 'required|exists:preoperacional_template_items,id',
-            'respuestas.*.estado' => 'required|in:B,M,C,NC,N,A',
-            'respuestas.*.observacion' => 'nullable|string',
-            'respuestas.*.foto_url' => 'nullable|string',
-            'observaciones_dia' => 'nullable|string',
+            'client_operation_id' => ['nullable', 'uuid'],
+            'respuestas' => ['required', 'array', 'min:1', 'max:500'],
+            'respuestas.*.item_id' => ['required', 'integer', 'distinct', 'exists:preoperacional_template_items,id'],
+            'respuestas.*.estado' => ['required', Rule::in(['B', 'M', 'C', 'NC', 'N', 'A'])],
+            'respuestas.*.observacion' => ['nullable', 'string', 'max:2000'],
+            'respuestas.*.foto_url' => ['prohibited'],
+            'respuestas.*.foto_path' => ['prohibited'],
+            'observaciones_dia' => ['nullable', 'string', 'max:5000'],
         ]);
 
         $force = $request->boolean('force', false);
 
-        return DB::transaction(function () use ($semanaId, $diaSemana, $validated, $force) {
-            $semana = PreoperacionalSemana::findOrFail($semanaId);
+        return DB::transaction(function () use ($semanaId, $diaSemana, $validated, $force, $request) {
+            $semana = PreoperacionalSemana::query()->lockForUpdate()->findOrFail($semanaId);
+
+            abort_unless(
+                $this->access->canAccessPreoperational($request->user(), $semana),
+                403,
+                'No autorizado para modificar este preoperacional.',
+            );
+
+            if ($force) {
+                abort_unless(
+                    $this->access->isSupervisor($request->user()),
+                    403,
+                    'Sólo un supervisor puede reemplazar un formulario completado.',
+                );
+            }
 
             // Validate dia_semana is valid
             $validDias = ['lunes', 'martes', 'miercoles', 'jueves', 'viernes', 'sabado', 'domingo'];
-            if (!in_array($diaSemana, $validDias)) {
+            if (! in_array($diaSemana, $validDias)) {
                 return response()->json([
-                    'message' => "Invalid dia_semana. Must be one of: " . implode(', ', $validDias),
+                    'message' => 'Invalid dia_semana. Must be one of: '.implode(', ', $validDias),
                 ], 422);
             }
 
             // Find or create daily form
             $dailyForm = PreoperacionalDailyForm::where('semana_id', $semanaId)
                 ->where('dia_semana', $diaSemana)
+                ->lockForUpdate()
                 ->first();
 
-            if (!$dailyForm) {
+            if (! $dailyForm) {
                 return response()->json([
                     'message' => "Daily form for {$diaSemana} not found in this week.",
                 ], 404);
             }
 
             // Deduplication check
-            if ($dailyForm->completado && !$force) {
+            if ($dailyForm->completado && ! $force) {
+                if (isset($validated['client_operation_id'])
+                    && $this->matchesCompletedSubmission($dailyForm, $validated)) {
+                    return response()->json([
+                        'message' => "Daily form for {$diaSemana} was already completed; the original result was replayed.",
+                        'client_operation_id' => strtolower($validated['client_operation_id']),
+                        'replayed' => true,
+                        'has_critical_failure' => $this->dailyFormHasCriticalFailure($dailyForm),
+                        'data' => $dailyForm->load(['responses.item', 'responses.evidence']),
+                    ]);
+                }
+
                 return response()->json([
                     'message' => "Daily form for {$diaSemana} is already completed. Use ?force=true to override.",
                 ], 409);
@@ -269,10 +347,25 @@ class PreoperacionalV2Controller extends Controller
 
             // Server-side criticality evaluation
             $hasCriticalFailure = false;
-            $criticalItemIds = PreoperacionalTemplateItem::where('template_id', $semana->template_id)
+            $templateItems = PreoperacionalTemplateItem::where('template_id', $semana->template_id)
+                ->get(['id', 'es_critico']);
+            $allowedItemIds = $templateItems->pluck('id')->map(fn ($id): int => (int) $id)->all();
+            $submittedItemIds = collect($validated['respuestas'])
+                ->pluck('item_id')
+                ->map(fn ($id): int => (int) $id)
+                ->all();
+
+            if (array_diff($submittedItemIds, $allowedItemIds) !== []) {
+                throw ValidationException::withMessages([
+                    'respuestas' => ['Todas las respuestas deben pertenecer a la plantilla de esta semana.'],
+                ]);
+            }
+
+            $criticalItemIds = $templateItems
                 ->where('es_critico', true)
                 ->pluck('id')
-                ->toArray();
+                ->map(fn ($id): int => (int) $id)
+                ->all();
 
             foreach ($validated['respuestas'] as $respuesta) {
                 if (in_array($respuesta['item_id'], $criticalItemIds)) {
@@ -298,7 +391,6 @@ class PreoperacionalV2Controller extends Controller
                     [
                         'estado' => $respuesta['estado'],
                         'observacion' => $respuesta['observacion'] ?? null,
-                        'foto_url' => $respuesta['foto_url'] ?? null,
                     ]
                 );
             }
@@ -308,8 +400,12 @@ class PreoperacionalV2Controller extends Controller
 
             return response()->json([
                 'message' => 'Daily form submitted successfully.',
+                'client_operation_id' => isset($validated['client_operation_id'])
+                    ? strtolower($validated['client_operation_id'])
+                    : null,
+                'replayed' => false,
                 'has_critical_failure' => $hasCriticalFailure,
-                'data' => $dailyForm->load(['responses.item']),
+                'data' => $dailyForm->load(['responses.item', 'responses.evidence']),
             ]);
         });
     }
@@ -321,11 +417,23 @@ class PreoperacionalV2Controller extends Controller
     public function markFueraServicio(int $id, Request $request): JsonResponse
     {
         $validated = $request->validate([
-            'motivo' => 'required|string|min:10',
+            'motivo' => ['required', 'string', 'min:10', 'max:2000'],
         ]);
 
-        return DB::transaction(function () use ($id, $validated) {
+        abort_unless(
+            $this->access->isSupervisor($request->user()),
+            403,
+            'Sólo un supervisor puede marcar un vehículo fuera de servicio.',
+        );
+
+        return DB::transaction(function () use ($id, $validated, $request) {
             $semana = PreoperacionalSemana::findOrFail($id);
+
+            abort_unless(
+                $this->access->canAccessPreoperational($request->user(), $semana),
+                403,
+                'No autorizado para modificar este preoperacional.',
+            );
 
             $semana->update([
                 'fuera_de_servicio' => true,
@@ -346,27 +454,49 @@ class PreoperacionalV2Controller extends Controller
      */
     public function indexSemanas(Request $request): JsonResponse
     {
+        $validated = $request->validate([
+            'semana_anio' => ['nullable', 'integer', 'between:2000,2100'],
+            'semana_numero' => ['nullable', 'integer', 'between:1,53'],
+            'vehiculo_id' => ['nullable', 'integer', 'exists:vehiculos,vehiculo_id'],
+            'estado' => ['nullable', Rule::in(['pendiente', 'en_progreso', 'completado', 'fuera_servicio'])],
+            'page' => ['nullable', 'integer', 'min:1'],
+        ]);
+
         $query = PreoperacionalSemana::with([
             'dailyForms.responses.item',
+            'dailyForms.responses.evidence',
             'template',
             'vehiculo',
             'inspector',
         ]);
 
-        if ($request->filled('semana_anio')) {
-            $query->where('semana_anio', $request->semana_anio);
+        if (! $this->access->isSupervisor($request->user())) {
+            $employeeId = $this->access->employeeId($request->user());
+
+            if ($employeeId === null) {
+                $query->whereRaw('1 = 0');
+            } else {
+                $query->where(function ($scope) use ($employeeId): void {
+                    $scope->where('inspector_id', $employeeId)
+                        ->orWhereHas('vehiculo', fn ($vehicles) => $vehicles->where('operador_asignado_id', $employeeId));
+                });
+            }
         }
 
-        if ($request->filled('semana_numero')) {
-            $query->where('semana_numero', $request->semana_numero);
+        if (isset($validated['semana_anio'])) {
+            $query->where('semana_anio', $validated['semana_anio']);
         }
 
-        if ($request->filled('vehiculo_id')) {
-            $query->where('vehiculo_id', $request->vehiculo_id);
+        if (isset($validated['semana_numero'])) {
+            $query->where('semana_numero', $validated['semana_numero']);
         }
 
-        if ($request->filled('estado')) {
-            $query->where('estado', $request->estado);
+        if (isset($validated['vehiculo_id'])) {
+            $query->where('vehiculo_id', $validated['vehiculo_id']);
+        }
+
+        if (isset($validated['estado'])) {
+            $query->where('estado', $validated['estado']);
         }
 
         $semanas = $query->orderBy('semana_inicio', 'desc')->paginate(20);
@@ -444,7 +574,7 @@ class PreoperacionalV2Controller extends Controller
         $data = $semana->toArray();
 
         // Calcular dinámicamente si la semana está vencida
-        if (!in_array($data['estado'], ['completado', 'fuera_servicio'])) {
+        if (! in_array($data['estado'], ['completado', 'fuera_servicio'])) {
             if ($semana->semana_fin && $semana->semana_fin->lt(Carbon::today())) {
                 $data['estado'] = 'vencida';
             }
@@ -458,9 +588,11 @@ class PreoperacionalV2Controller extends Controller
                     if ($response->relationLoaded('item')) {
                         $r['item'] = $this->formatItem($response->item);
                     }
+
                     return $r;
                 })->toArray();
             }
+
             return $form;
         })->toArray();
 
@@ -487,9 +619,55 @@ class PreoperacionalV2Controller extends Controller
             $newEstado = 'en_progreso';
         }
 
-        if ($semana->estado !== $newEstado && !$semana->fuera_de_servicio) {
+        if ($semana->estado !== $newEstado && ! $semana->fuera_de_servicio) {
             $semana->update(['estado' => $newEstado]);
         }
+    }
+
+    /** @param array<string, mixed> $validated */
+    private function matchesCompletedSubmission(
+        PreoperacionalDailyForm $dailyForm,
+        array $validated,
+    ): bool {
+        $submitted = collect($validated['respuestas'])
+            ->map(fn (array $response): array => [
+                'item_id' => (int) $response['item_id'],
+                'estado' => (string) $response['estado'],
+                'observacion' => isset($response['observacion'])
+                    ? (string) $response['observacion']
+                    : null,
+            ])
+            ->sortBy('item_id')
+            ->values()
+            ->all();
+
+        $stored = $dailyForm->responses()
+            ->get(['item_id', 'estado', 'observacion'])
+            ->map(fn (PreoperacionalFormResponse $response): array => [
+                'item_id' => (int) $response->item_id,
+                'estado' => (string) $response->estado,
+                'observacion' => $response->observacion === null
+                    ? null
+                    : (string) $response->observacion,
+            ])
+            ->sortBy('item_id')
+            ->values()
+            ->all();
+
+        $submittedNotes = $validated['observaciones_dia'] ?? null;
+        $storedNotes = $dailyForm->observaciones_dia;
+
+        return $submitted === $stored
+            && ($submittedNotes === null ? null : (string) $submittedNotes)
+                === ($storedNotes === null ? null : (string) $storedNotes);
+    }
+
+    private function dailyFormHasCriticalFailure(PreoperacionalDailyForm $dailyForm): bool
+    {
+        return $dailyForm->responses()
+            ->whereIn('estado', ['M', 'NC'])
+            ->whereHas('item', fn ($items) => $items->where('es_critico', true))
+            ->exists();
     }
 
     /**

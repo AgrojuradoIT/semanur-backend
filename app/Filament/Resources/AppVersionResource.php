@@ -4,6 +4,7 @@ namespace App\Filament\Resources;
 
 use App\Filament\Resources\AppVersionResource\Pages;
 use App\Models\AppVersion;
+use BackedEnum;
 use Filament\Actions;
 use Filament\Forms;
 use Filament\Resources\Resource;
@@ -11,18 +12,17 @@ use Filament\Schemas\Components\Section;
 use Filament\Schemas\Schema;
 use Filament\Tables;
 use Filament\Tables\Table;
-use BackedEnum;
 use Illuminate\Support\Facades\Auth;
 
 class AppVersionResource extends Resource
 {
     protected static ?string $model = AppVersion::class;
 
-    protected static string | BackedEnum | null $navigationIcon = 'heroicon-o-arrow-up-tray';
+    protected static string|BackedEnum|null $navigationIcon = 'heroicon-o-arrow-up-tray';
 
     protected static ?string $navigationLabel = 'Versiones App';
 
-    protected static string | \UnitEnum | null $navigationGroup = 'Configuración';
+    protected static string|\UnitEnum|null $navigationGroup = 'Configuración';
 
     protected static ?string $modelLabel = 'Versión';
 
@@ -57,7 +57,9 @@ class AppVersionResource extends Resource
                         Forms\Components\Toggle::make('is_active')
                             ->label('Versión Activa')
                             ->helperText('Solo puede haber UNA versión activa. Al activar esta, se desactivarán las demás.')
-                            ->default(false),
+                            ->default(false)
+                            ->disabled()
+                            ->dehydrated(false),
                     ])
                     ->columns(2),
 
@@ -75,6 +77,31 @@ class AppVersionResource extends Resource
                             ->maxSize(150 * 1024) // 150MB
                             ->label('Archivo APK')
                             ->helperText('Sube el archivo .apk compilado (máx. 150MB)'),
+
+                        Forms\Components\TextInput::make('package_name')
+                            ->required()
+                            ->default(fn (): string => (string) config('app_version.package_name', 'com.semanur.hub'))
+                            ->regex('/^[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z][A-Za-z0-9_]*)+$/')
+                            ->maxLength(255)
+                            ->label('Android package name'),
+
+                        Forms\Components\TextInput::make('signer_sha256')
+                            ->required()
+                            ->length(64)
+                            ->regex('/^[A-Fa-f0-9]{64}$/')
+                            ->dehydrateStateUsing(fn (?string $state): ?string => $state === null ? null : strtoupper(str_replace([':', ' ', '-'], '', $state)))
+                            ->label('SHA-256 del certificado firmante')
+                            ->helperText('Huella hexadecimal sin espacios ni dos puntos.'),
+
+                        Forms\Components\TextInput::make('apk_sha256')
+                            ->disabled()
+                            ->dehydrated(false)
+                            ->label('SHA-256 calculado'),
+
+                        Forms\Components\TextInput::make('apk_size_bytes')
+                            ->disabled()
+                            ->dehydrated(false)
+                            ->label('Tamaño calculado (bytes)'),
                     ]),
 
                 Section::make('Notas del Release')
@@ -116,6 +143,11 @@ class AppVersionResource extends Resource
                     ->label('Mín. Soportada')
                     ->formatStateUsing(fn (string $state) => "v{$state}"),
 
+                Tables\Columns\TextColumn::make('apk_sha256')
+                    ->label('SHA-256')
+                    ->limit(12)
+                    ->copyable(),
+
                 Tables\Columns\TextColumn::make('release_notes')
                     ->label('Notas')
                     ->limit(50)
@@ -156,9 +188,9 @@ class AppVersionResource extends Resource
     public static function getPages(): array
     {
         return [
-            'index'  => Pages\ListAppVersions::route('/'),
+            'index' => Pages\ListAppVersions::route('/'),
             'create' => Pages\CreateAppVersion::route('/create'),
-            'edit'   => Pages\EditAppVersion::route('/{record}/edit'),
+            'edit' => Pages\EditAppVersion::route('/{record}/edit'),
         ];
     }
 }

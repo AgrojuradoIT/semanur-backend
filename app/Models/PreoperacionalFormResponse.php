@@ -4,6 +4,7 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 
 class PreoperacionalFormResponse extends Model
 {
@@ -25,6 +26,14 @@ class PreoperacionalFormResponse extends Model
     public function item(): BelongsTo
     {
         return $this->belongsTo(PreoperacionalTemplateItem::class, 'item_id');
+    }
+
+    public function evidence(): HasOne
+    {
+        return $this->hasOne(Media::class, 'entity_id')
+            ->where('module', 'checklists')
+            ->where('entity_type', 'preoperacional_respuesta')
+            ->latestOfMany();
     }
 
     public function scopeFallidos($query)
