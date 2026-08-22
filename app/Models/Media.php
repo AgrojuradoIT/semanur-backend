@@ -5,7 +5,6 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes;
-use Illuminate\Support\Facades\Storage;
 
 class Media extends Model
 {
@@ -24,6 +23,9 @@ class Media extends Model
         'mime_type',
         'size',
         'created_by',
+        'client_operation_id',
+        'client_operation_hash',
+        'content_sha256',
     ];
 
     protected $casts = [
@@ -39,15 +41,20 @@ class Media extends Model
         'url',
     ];
 
+    protected $hidden = [
+        'disk',
+        'path',
+        'created_by',
+        'client_operation_id',
+        'client_operation_hash',
+    ];
+
     /**
-     * URL absoluta pública del archivo, basada en el disk configurado.
+     * Authenticated API URL. The physical disk/path is never serialized.
      */
     public function getUrlAttribute(): string
     {
-        /** @var \Illuminate\Filesystem\FilesystemAdapter $disk */
-        $disk = Storage::disk($this->disk);
-
-        return $disk->url($this->path);
+        return url('/api/media/'.$this->getKey().'/content');
     }
 
     /**
@@ -58,4 +65,3 @@ class Media extends Model
         return $this->belongsTo(User::class, 'created_by');
     }
 }
-

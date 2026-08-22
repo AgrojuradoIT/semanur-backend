@@ -3,203 +3,196 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\OffboardEmpleadoRequest;
+use App\Http\Requests\StoreEmpleadoRequest;
+use App\Http\Requests\UpdateEmpleadoRequest;
+use App\Http\Resources\EmpleadoDetailResource;
+use App\Http\Resources\EmpleadoOptionResource;
 use App\Models\Empleado;
+use App\Models\User;
 use Illuminate\Http\Request;
-use Illuminate\Validation\Rule;
+use Illuminate\Support\Arr;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Storage;
 
 class EmpleadoApiController extends Controller
 {
     public function index(Request $request)
     {
+        $canViewPersonalData = $request->user()->canAnyPermission([
+            'personal.read',
+            'personal.write',
+        ]);
+
         $query = Empleado::query();
 
-        if ($request->has('q')) {
-            $search = $request->q;
-            $query->where(function($q) use ($search) {
-                $q->where('nombres', 'like', "%{$search}%")
-                  ->orWhere('apellidos', 'like', "%{$search}%")
-                  ->orWhere('documento', 'like', "%{$search}%");
+        if ($request->filled('q')) {
+            $search = trim((string) $request->input('q'));
+            $query->where(function ($builder) use ($search, $canViewPersonalData): void {
+                $builder->where('nombres', 'like', "%{$search}%")
+                    ->orWhere('apellidos', 'like', "%{$search}%");
+
+                if ($canViewPersonalData) {
+                    $builder->orWhere('documento', 'like', "%{$search}%");
+                }
             });
         }
 
-        // Filtro por estado
-        if ($request->has('estado') && $request->estado !== 'todos') {
-            $query->where('estado', $request->estado);
+        if ($request->filled('estado') && $request->input('estado') !== 'todos') {
+            $query->where('estado', $request->input('estado'));
         }
 
-        // Compatibilidad: frontend puede enviar 'role' o 'cargo'
         $cargo = $request->input('cargo', $request->input('role'));
-        if (!empty($cargo) && $cargo !== 'todos') {
+        if (! empty($cargo) && $cargo !== 'todos') {
             $query->where('cargo', $cargo);
         }
 
+        $employees = $query->orderBy('nombres')->orderBy('apellidos')->get();
+        $resource = $canViewPersonalData ? EmpleadoDetailResource::class : EmpleadoOptionResource::class;
+
         return response()->json(
-            $query
-                ->select([
-                    'id',
-                    'nombres',
-                    'apellidos',
-                    'documento',
-                    'telefono',
-                    'cargo',
-                    'licencia_conduccion',
-                    'categoria_licencia',
-                    'estado',
-                    'foto_url',
-                    'fecha_retiro',
-                    'motivo_retiro',
-                    'user_id',
-                    'created_at',
-                    'updated_at',
-                ])
-                ->orderBy('nombres')
-                ->get()
+            $employees->map(fn (Empleado $employee): array => $resource::make($employee)->resolve($request))
         );
     }
 
-    public function store(Request $request)
+    public function store(StoreEmpleadoRequest $request)
     {
-        $request->validate([
-            'nombres' => 'required|string|max:255',
-            'apellidos' => 'nullable|string|max:255',
-            'documento' => 'nullable|string|max:50|unique:empleados',
-            'telefono' => 'nullable|string|max:50',
-            'direccion' => 'nullable|string|max:255',
-            'cargo' => ['nullable', 'string', 'max:100', Rule::exists('cargos', 'nombre')->where('activo', true)],
-            'licencia_conduccion' => 'nullable|string|max:50',
-            'categoria_licencia' => 'nullable|string|max:10',
-            'vencimiento_licencia' => 'nullable|date',
-            'resumen_profesional' => 'nullable|string|max:5000',
-            'foto_url' => 'nullable|image|max:5120',
-            // User validation if creating user
-            'crear_usuario' => 'boolean',
-            'email' => 'required_if:crear_usuario,true|email|unique:users,email',
-            'password' => 'required_if:crear_usuario,true|min:6',
-            'role' => 'required_if:crear_usuario,true|in:admin,mecanico,operador,almacenista',
-        ]);
+        $validated = $request->validated();
 
-        return \Illuminate\Support\Facades\DB::transaction(function () use ($request) {
+        $employee = DB::transaction(function () use ($request, $validated): Empleado {
             $userId = null;
 
             if ($request->boolean('crear_usuario')) {
-                $user = \App\Models\User::create([
-                    'name' => $request->nombres . ' ' . $request->apellidos,
-                    'email' => $request->email,
-                    'password' => \Illuminate\Support\Facades\Hash::make($request->password),
-                    'role' => $request->role,
-                    'phone' => $request->telefono,
-                    'license_number' => $request->licencia_conduccion,
-                    'cargo' => $request->cargo,
+                $user = User::create([
+                    'name' => trim($validated['nombres'].' '.($validated['apellidos'] ?? '')),
+                    'email' => $validated['email'],
+                    'password' => Hash::make($validated['password']),
+                    'role' => $validated['role'],
+                    'phone' => $validated['telefono'] ?? null,
+                    'license_number' => $validated['licencia_conduccion'] ?? null,
+                    'cargo' => $validated['cargo'] ?? null,
                 ]);
-                $userId = $user->id;
+                $userId = $user->getKey();
+
+                Log::notice('Technical user created with employee', [
+                    'actor_user_id' => $request->user()->getKey(),
+                    'created_user_id' => $userId,
+                    'role' => $validated['role'],
+                ]);
             }
 
-            $empleadoData = $request->except(['crear_usuario', 'email', 'password', 'role']);
-            
+            $employeeData = Arr::except($validated, ['crear_usuario', 'email', 'password', 'role', 'foto_url']);
+
             if ($request->hasFile('foto_url')) {
-                $path = $request->file('foto_url')->store('empleados', 'public');
-                $empleadoData['foto_url'] = $path;
+                $employeeData['foto_url'] = $request->file('foto_url')->store('empleados', 'public');
             }
 
-            $empleadoData['user_id'] = $userId;
+            $employeeData['user_id'] = $userId;
 
-            $empleado = Empleado::create($empleadoData);
-
-            return response()->json($empleado, 201);
+            return Empleado::create($employeeData);
         });
+
+        return response()->json(
+            EmpleadoDetailResource::make($employee)->resolve($request),
+            201,
+        );
     }
 
-    public function show($id)
+    public function show(Request $request, int $empleado)
     {
-        $empleado = Empleado::with([
-                'user',
-                'programaciones' => function ($q) {
-                    $q->orderBy('fecha', 'desc');
-                },
-                'programaciones.vehiculo',
-                'programaciones.ordenTrabajo',
-                'ordenesTrabajoAsignadas' => function ($q) {
-                    $q->orderBy('fecha_inicio', 'desc');
-                },
-                'ordenesTrabajoAsignadas.vehiculo',
-                'registrosCombustible' => function ($q) {
-                    $q->orderBy('fecha', 'desc');
-                },
-                'registrosCombustible.vehiculo',
-                'prestamosHerramientas' => function ($q) {
-                    $q->orderBy('fecha_prestamo', 'desc');
-                },
-                'prestamosHerramientas.producto',
-                'checklists' => function ($q) {
-                    $q->orderBy('fecha', 'desc');
-                },
-                'checklists.vehiculo'
-            ])
+        $employee = Empleado::with([
+            'user:id,name,email,role,phone,license_number,cargo',
+            'programaciones' => fn ($query) => $query->orderBy('fecha', 'desc'),
+            'programaciones.vehiculo',
+            'programaciones.ordenTrabajo',
+            'ordenesTrabajoAsignadas' => fn ($query) => $query->orderBy('fecha_inicio', 'desc'),
+            'ordenesTrabajoAsignadas.vehiculo',
+            'registrosCombustible' => fn ($query) => $query->orderBy('fecha', 'desc'),
+            'registrosCombustible.vehiculo',
+            'prestamosHerramientas' => fn ($query) => $query->orderBy('fecha_prestamo', 'desc'),
+            'prestamosHerramientas.producto',
+            'checklists' => fn ($query) => $query->orderBy('fecha', 'desc'),
+            'checklists.vehiculo',
+        ])
             ->withCount([
                 'ordenesTrabajoAsignadas',
                 'prestamosHerramientas',
                 'registrosCombustible',
                 'checklists',
-                'sesiones'
+                'sesiones',
             ])
-            ->findOrFail($id);
+            ->findOrFail($empleado);
 
-        // Contar estadísticas reales
-        $stats = [
-            'ot_asignadas'   => $empleado->ordenes_trabajo_asignadas_count,
-            'prestamos'      => $empleado->prestamos_herramientas_count,
-            'tanqueos'       => $empleado->registros_combustible_count,
-            'checklists'     => $empleado->checklists_count,
-            'sesiones'       => $empleado->sesiones_count,
-        ];
-
-        $data = $empleado->toArray();
-        $data['stats'] = $stats;
-
-        return response()->json($data);
-    }
-
-    public function update(Request $request, $id)
-    {
-        $empleado = Empleado::findOrFail($id);
-
-        $request->validate([
-            'nombres' => 'sometimes|required|string|max:255',
-            'apellidos' => 'nullable|string|max:255',
-            'documento' => ['nullable', 'string', 'max:50', Rule::unique('empleados')->ignore($empleado->id)],
-            'telefono' => 'nullable|string|max:50',
-            'direccion' => 'nullable|string|max:255',
-            'cargo' => ['nullable', 'string', 'max:100', Rule::exists('cargos', 'nombre')->where('activo', true)],
-            'licencia_conduccion' => 'nullable|string|max:50',
-            'categoria_licencia' => 'nullable|string|max:10',
-            'vencimiento_licencia' => 'nullable|date',
-            'resumen_profesional' => 'nullable|string|max:5000',
-            'foto_url' => 'nullable|image|max:5120',
-            'estado' => 'nullable|string|in:activo,inactivo,retirado',
-            'fecha_retiro' => 'nullable|date',
-            'motivo_retiro' => 'nullable|string|max:500',
-            'user_id' => ['nullable', 'exists:users,id', Rule::unique('empleados')->ignore($empleado->id)],
+        $employee->setAttribute('stats', [
+            'ot_asignadas' => $employee->ordenes_trabajo_asignadas_count,
+            'prestamos' => $employee->prestamos_herramientas_count,
+            'tanqueos' => $employee->registros_combustible_count,
+            'checklists' => $employee->checklists_count,
+            'sesiones' => $employee->sesiones_count,
         ]);
 
-        $data = $request->all();
-        if ($request->hasFile('foto_url')) {
-            if ($empleado->foto_url && \Illuminate\Support\Facades\Storage::disk('public')->exists($empleado->foto_url)) {
-                \Illuminate\Support\Facades\Storage::disk('public')->delete($empleado->foto_url);
-            }
-            $path = $request->file('foto_url')->store('empleados', 'public');
-            $data['foto_url'] = $path;
-        }
-
-        $empleado->update($data);
-
-        return response()->json($empleado);
+        return response()->json(
+            EmpleadoDetailResource::make($employee)->resolve($request)
+        );
     }
 
-    public function destroy($id)
+    public function update(UpdateEmpleadoRequest $request, int $empleado)
     {
-        $empleado = Empleado::findOrFail($id);
-        $empleado->delete();
+        $employee = Empleado::findOrFail($empleado);
+        $validated = $request->validated();
 
-        return response()->json(['message' => 'Empleado eliminado correctamente']);
+        DB::transaction(function () use ($request, $employee, $validated): void {
+            $data = Arr::except($validated, ['foto_url']);
+
+            if ($request->hasFile('foto_url')) {
+                $previousPhoto = $employee->foto_url;
+                $data['foto_url'] = $request->file('foto_url')->store('empleados', 'public');
+
+                DB::afterCommit(function () use ($previousPhoto): void {
+                    if ($previousPhoto && Storage::disk('public')->exists($previousPhoto)) {
+                        Storage::disk('public')->delete($previousPhoto);
+                    }
+                });
+            }
+
+            $employee->update($data);
+        });
+
+        return response()->json(
+            EmpleadoDetailResource::make($employee->refresh())->resolve($request)
+        );
+    }
+
+    /**
+     * Preserve the operational record and perform auditable offboarding
+     * instead of deleting employee history.
+     */
+    public function destroy(OffboardEmpleadoRequest $request, int $empleado)
+    {
+        $employee = Empleado::findOrFail($empleado);
+        $validated = $request->validated();
+
+        DB::transaction(function () use ($employee, $validated, $request): void {
+            $employee->update([
+                'estado' => 'retirado',
+                'fecha_retiro' => $validated['fecha_retiro'] ?? now()->toDateString(),
+                'motivo_retiro' => $validated['motivo_retiro']
+                    ?? $employee->motivo_retiro
+                    ?? 'Retiro registrado mediante API',
+            ]);
+
+            Log::notice('Employee offboarded without deleting history', [
+                'actor_user_id' => $request->user()->getKey(),
+                'employee_id' => $employee->getKey(),
+                'linked_user_id' => $employee->user_id,
+            ]);
+        });
+
+        return response()->json([
+            'message' => 'Empleado retirado; el historial fue preservado.',
+            'data' => EmpleadoDetailResource::make($employee->refresh())->resolve($request),
+        ]);
     }
 }

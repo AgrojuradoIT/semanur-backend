@@ -15,7 +15,7 @@ return new class extends Migration
             Schema::table('notificaciones', function (Blueprint $table) {
                 $table->index(['user_id', 'fecha_leido', 'created_at'], 'notif_user_read_date_idx');
             });
-        } catch (\Exception $e) {
+        } catch (Exception $e) {
             // Index might already exist
         }
     }
@@ -25,8 +25,8 @@ return new class extends Migration
      */
     public function down(): void
     {
-        Schema::table('notificaciones', function (Blueprint $table) {
-            $table->dropIndex('notif_user_read_date_idx');
-        });
+        throw new RuntimeException(
+            'Forward-only migration: this migration is part of the verified production baseline.',
+        );
     }
 };

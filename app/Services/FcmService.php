@@ -2,8 +2,8 @@
 
 namespace App\Services;
 
-use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 
 class FcmService
@@ -15,14 +15,16 @@ class FcmService
     {
         try {
             $projectId = self::getProjectId();
-            if (!$projectId) {
+            if (! $projectId) {
                 Log::warning('FcmService: No se encontró project_id. Asegúrate de colocar firebase-service-account.json');
+
                 return false;
             }
 
             $accessToken = self::getAccessToken();
-            if (!$accessToken) {
+            if (! $accessToken) {
                 Log::error('FcmService: No se pudo obtener el Access Token de Google.');
+
                 return false;
             }
 
@@ -31,7 +33,7 @@ class FcmService
             // Normalizar todos los valores de $data a string (FCM v1 exige strings)
             $formattedData = [];
             foreach ($data as $key => $value) {
-                $formattedData[(string)$key] = (string)$value;
+                $formattedData[(string) $key] = (string) $value;
             }
 
             $messagePayload = [
@@ -44,23 +46,23 @@ class FcmService
                     'notification' => [
                         'sound' => 'default',
                         'click_action' => 'FLUTTER_NOTIFICATION_CLICK',
-                    ]
+                    ],
                 ],
                 'apns' => [
                     'payload' => [
                         'aps' => [
                             'sound' => 'default',
-                        ]
-                    ]
-                ]
+                        ],
+                    ],
+                ],
             ];
 
-            if (!empty($formattedData)) {
+            if (! empty($formattedData)) {
                 $messagePayload['data'] = $formattedData;
             }
 
             $payload = [
-                'message' => $messagePayload
+                'message' => $messagePayload,
             ];
 
             $client = Http::withToken($accessToken)
@@ -73,14 +75,26 @@ class FcmService
             $response = $client->post($url, $payload);
 
             if ($response->successful()) {
-                Log::info("FcmService: Notificación enviada con éxito a {$token}");
+                Log::info('FcmService: Notificación enviada con éxito', [
+                    'token_fingerprint' => substr(hash('sha256', $token), 0, 12),
+                ]);
+
                 return true;
             }
 
-            Log::error("FcmService: Error enviando push: " . $response->body());
+            Log::error('FcmService: Error enviando push', [
+                'token_fingerprint' => substr(hash('sha256', $token), 0, 12),
+                'detail' => self::redact($response->body(), [$token, $accessToken]),
+            ]);
+
             return false;
         } catch (\Exception $e) {
-            Log::error("FcmService: Excepción al enviar push: " . $e->getMessage());
+            Log::error('FcmService: Excepción al enviar push', [
+                'token_fingerprint' => substr(hash('sha256', $token), 0, 12),
+                'exception' => get_class($e),
+                'detail' => self::redact($e->getMessage(), [$token]),
+            ]);
+
             return false;
         }
     }
@@ -91,6 +105,7 @@ class FcmService
     private static function getProjectId(): ?string
     {
         $creds = self::getCredentials();
+
         return $creds['project_id'] ?? null;
     }
 
@@ -101,13 +116,13 @@ class FcmService
     {
         return Cache::remember('fcm_google_access_token', 3000, function () {
             $creds = self::getCredentials();
-            if (!$creds) {
+            if (! $creds) {
                 return null;
             }
 
             // Crear JWT Assertion para intercambiar por token de acceso de Google
             $jwt = self::generateJwt($creds);
-            if (!$jwt) {
+            if (! $jwt) {
                 return null;
             }
 
@@ -125,7 +140,8 @@ class FcmService
                 return $response['access_token'];
             }
 
-            Log::error("FcmService: Error de intercambio JWT: " . $response->body());
+            Log::error('FcmService: Error de intercambio JWT: '.$response->body());
+
             return null;
         });
     }
@@ -138,7 +154,7 @@ class FcmService
         $privateKey = $creds['private_key'] ?? null;
         $clientEmail = $creds['client_email'] ?? null;
 
-        if (!$privateKey || !$clientEmail) {
+        if (! $privateKey || ! $clientEmail) {
             return null;
         }
 
@@ -159,8 +175,9 @@ class FcmService
         $signatureInput = "{$base64UrlHeader}.{$base64UrlClaim}";
         $signature = '';
 
-        if (!openssl_sign($signatureInput, $signature, $privateKey, 'SHA256')) {
-            Log::error("FcmService: Error al firmar JWT con OpenSSL.");
+        if (! openssl_sign($signatureInput, $signature, $privateKey, 'SHA256')) {
+            Log::error('FcmService: Error al firmar JWT con OpenSSL.');
+
             return null;
         }
 
@@ -175,14 +192,15 @@ class FcmService
     private static function getCredentials(): ?array
     {
         $path = storage_path('app/firebase-service-account.json');
-        if (!file_exists($path)) {
+        if (! file_exists($path)) {
             return null;
         }
 
         try {
             return json_decode(file_get_contents($path), true);
         } catch (\Exception $e) {
-            Log::error("FcmService: Error leyendo credentials json: " . $e->getMessage());
+            Log::error('FcmService: Error leyendo credentials json: '.$e->getMessage());
+
             return null;
         }
     }
@@ -190,5 +208,17 @@ class FcmService
     private static function base64UrlEncode(string $data): string
     {
         return str_replace(['+', '/', '='], ['-', '_', ''], base64_encode($data));
+    }
+
+    /** @param array<int, string|null> $secrets */
+    private static function redact(string $message, array $secrets): string
+    {
+        foreach ($secrets as $secret) {
+            if (is_string($secret) && $secret !== '') {
+                $message = str_replace($secret, '[redacted]', $message);
+            }
+        }
+
+        return $message;
     }
 }
