@@ -3,18 +3,20 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
-use App\Models\Bodega;
-use App\Models\Empleado;
 use App\Models\PrestamoHerramienta;
 use App\Models\Producto;
 use App\Models\TransaccionInventario;
-use App\Models\User;
+use App\Services\Inventory\InventoryWarehouseResolver;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
 class PrestamoApiController extends Controller
 {
+    public function __construct(
+        private readonly InventoryWarehouseResolver $warehouseResolver,
+    ) {}
+
     // Removed resolveMecanicoUserId as we now strictly use empleado_id from the frontend
 
     public function index(Request $request)
@@ -36,6 +38,7 @@ class PrestamoApiController extends Controller
             'mecanico_id' => 'required|exists:empleados,id',
             'prestamo_cantidad' => 'required|numeric|min:0.01',
             'notas' => 'nullable|string',
+            'bodega_id' => 'nullable|integer|exists:bodegas,bodega_id',
         ]);
 
         $mecanicoId = (int) $request->mecanico_id;
@@ -47,7 +50,9 @@ class PrestamoApiController extends Controller
                 return response()->json(['message' => 'Stock insuficiente para el prestamo'], 422);
             }
 
-            $bodegaId = Bodega::where('tipo', 'estandar')->value('bodega_id') ?? Bodega::value('bodega_id');
+            $bodegaId = $this->warehouseResolver
+                ->resolve($request->filled('bodega_id') ? (int) $request->bodega_id : null)
+                ->bodega_id;
 
             $prestamo = PrestamoHerramienta::create([
                 'producto_id' => $request->producto_id,
@@ -106,9 +111,8 @@ class PrestamoApiController extends Controller
                     ->where('transaccion_tipo', 'salida')
                     ->first();
 
-                $bodegaId = $salidaOriginal?->bodega_id 
-                    ?? Bodega::where('tipo', 'estandar')->value('bodega_id') 
-                    ?? Bodega::value('bodega_id');
+                $bodegaId = $salidaOriginal?->bodega_id
+                    ?? $this->warehouseResolver->resolve()->bodega_id;
 
                 TransaccionInventario::create([
                     'reverses_transaction_id' => $salidaOriginal?->transaccion_id,
