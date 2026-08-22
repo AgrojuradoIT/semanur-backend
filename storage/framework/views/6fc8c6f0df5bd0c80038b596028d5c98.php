@@ -11,7 +11,7 @@
         'fi-logo-dark' => $isDarkMode,
     ]);
 
-    $logoStyles = "height: {$brandLogoHeight}";
+    $logoStyles = 'height: ' . e($brandLogoHeight);
 ?>
 
 
