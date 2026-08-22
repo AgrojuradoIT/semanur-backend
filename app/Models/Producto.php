@@ -30,4 +30,11 @@ class Producto extends Model
     {
         return $this->hasMany(TransaccionInventario::class, 'producto_id', 'producto_id');
     }
+
+    public function bodegas()
+    {
+        return $this->belongsToMany(Bodega::class, 'bodega_producto', 'producto_id', 'bodega_id')
+            ->withPivot('cantidad')
+            ->withTimestamps();
+    }
 }

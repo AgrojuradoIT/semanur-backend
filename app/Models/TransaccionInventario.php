@@ -12,7 +12,11 @@ class TransaccionInventario extends Model
         'reverses_transaction_id',
         'producto_id',
         'bodega_id',
+        'bodega_origen_id',
+        'bodega_destino_id',
         'usuario_id',
+        'client_operation_id',
+        'client_operation_hash',
         'transaccion_tipo',
         'transaccion_cantidad',
         'transaccion_motivo',
@@ -31,6 +35,16 @@ class TransaccionInventario extends Model
         return $this->belongsTo(Bodega::class, 'bodega_id', 'bodega_id');
     }
 
+    public function bodegaOrigen()
+    {
+        return $this->belongsTo(Bodega::class, 'bodega_origen_id', 'bodega_id');
+    }
+
+    public function bodegaDestino()
+    {
+        return $this->belongsTo(Bodega::class, 'bodega_destino_id', 'bodega_id');
+    }
+
     public function usuario()
     {
         return $this->belongsTo(User::class, 'usuario_id', 'id');
@@ -39,5 +53,10 @@ class TransaccionInventario extends Model
     public function referencia()
     {
         return $this->morphTo('transaccion_referencia');
+    }
+
+    public function transaccionRevertida()
+    {
+        return $this->belongsTo(TransaccionInventario::class, 'reverses_transaction_id', 'transaccion_id');
     }
 }

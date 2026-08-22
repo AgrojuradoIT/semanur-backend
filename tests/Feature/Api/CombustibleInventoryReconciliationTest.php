@@ -75,6 +75,7 @@ class CombustibleInventoryReconciliationTest extends TestCase
         ]);
 
         $this->postJson('/api/combustible', [
+            'bodega_id' => $bodega->bodega_id,
             'tipo_destino' => 'tercero',
             'tipo_combustible' => 'gasolina',
             'tercero_nombre' => 'Operador de prueba',
@@ -97,10 +98,11 @@ class CombustibleInventoryReconciliationTest extends TestCase
             'categoria_nombre' => 'Combustible',
             'categoria_tipo' => 'combustible',
         ]);
-        Bodega::create(['nombre' => 'Bodega Principal', 'tipo' => 'estandar']);
+        $bodega = Bodega::create(['nombre' => 'Bodega Principal', 'tipo' => 'estandar']);
         $gasolina = $this->createFuelProduct($category, 'GASOLINA', 100);
 
         $this->postJson('/api/combustible', [
+            'bodega_id' => $bodega->bodega_id,
             'tipo_destino' => 'tercero',
             'tipo_combustible' => 'gasolina',
             'tercero_nombre' => 'Operador de prueba',

@@ -7,11 +7,13 @@ use Illuminate\Database\Eloquent\Model;
 class Bodega extends Model
 {
     protected $primaryKey = 'bodega_id';
-    protected $fillable = ['nombre', 'descripcion', 'tipo', 'last_updated'];
+
+    protected $fillable = ['nombre', 'descripcion', 'tipo'];
 
     public function productos()
     {
         return $this->belongsToMany(Producto::class, 'bodega_producto', 'bodega_id', 'producto_id')
-                    ->withPivot('cantidad', 'last_updated');
+            ->withPivot('cantidad')
+            ->withTimestamps();
     }
 }

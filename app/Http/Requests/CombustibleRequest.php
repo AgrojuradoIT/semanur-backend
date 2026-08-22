@@ -15,6 +15,12 @@ class CombustibleRequest extends FormRequest
     public function rules(): array
     {
         $rules = [
+            'client_operation_id' => [
+                Rule::requiredIf((bool) config('inventory.require_client_operation_id', false)),
+                'nullable',
+                'uuid',
+            ],
+            'bodega_id' => ['nullable', 'integer', 'exists:bodegas,bodega_id'],
             'tipo_destino' => ['required', Rule::in(['vehiculo', 'empleado', 'tercero', 'equipo_menor', 'maquinaria'])],
             'tipo_combustible' => ['required', Rule::in(['gasolina', 'acpm'])],
             'cantidad_galones' => ['required', 'numeric', 'min:0.01'],
