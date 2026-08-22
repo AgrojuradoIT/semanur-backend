@@ -3,12 +3,15 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
-use App\Models\Empleado;
-use App\Models\Vehiculo;
 use App\Models\TransaccionInventario;
+use App\Models\Vehiculo;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Validation\ValidationException;
+use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Str;
+use Intervention\Image\Drivers\Gd\Driver;
+use Intervention\Image\Format;
+use Intervention\Image\ImageManager;
 
 class VehiculoApiController extends Controller
 {
@@ -53,28 +56,28 @@ class VehiculoApiController extends Controller
         }
 
         $vehiculo = Vehiculo::create($validated);
-        
+
         // Recargar relaciones
         $vehiculo->load(['operador', 'mecanico']);
 
         return response()->json([
             'message' => 'Vehículo creado correctamente',
-            'vehiculo' => $vehiculo
+            'vehiculo' => $vehiculo,
         ], 201);
     }
 
     public function show($id)
     {
         $vehiculo = Vehiculo::with([
-            'ordenesTrabajo' => function($query) {
+            'ordenesTrabajo' => function ($query) {
                 $query->orderBy('created_at', 'desc');
             },
             'ordenesTrabajo.movimientos_inventario.producto', // Repuestos usados en cada OT
             'operador',
-            'mecanico'
+            'mecanico',
         ])->find($id);
 
-        if (!$vehiculo) {
+        if (! $vehiculo) {
             return response()->json(['message' => 'Vehículo no encontrado'], 404);
         }
 
@@ -92,7 +95,7 @@ class VehiculoApiController extends Controller
     {
         $vehiculo = Vehiculo::find($id);
 
-        if (!$vehiculo) {
+        if (! $vehiculo) {
             return response()->json(['message' => 'Vehículo no encontrado'], 404);
         }
 
@@ -124,13 +127,13 @@ class VehiculoApiController extends Controller
         }
 
         $vehiculo->update($validated);
-        
+
         // Recargar relaciones para devolver objeto completo
         $vehiculo->load(['operador', 'mecanico']);
 
         return response()->json([
             'message' => 'Vehículo actualizado correctamente',
-            'vehiculo' => $vehiculo
+            'vehiculo' => $vehiculo,
         ]);
     }
 
@@ -139,7 +142,7 @@ class VehiculoApiController extends Controller
         return DB::transaction(function () use ($id) {
             $vehiculo = Vehiculo::find($id);
 
-            if (!$vehiculo) {
+            if (! $vehiculo) {
                 return response()->json(['message' => 'Vehículo no encontrado'], 404);
             }
 
@@ -172,44 +175,48 @@ class VehiculoApiController extends Controller
 
         if ($request->hasFile('imagen')) {
             $uuid = Str::uuid()->toString();
-            
-            $manager = \Intervention\Image\ImageManager::usingDriver(
-                \Intervention\Image\Drivers\Gd\Driver::class
+
+            $manager = ImageManager::usingDriver(
+                Driver::class
             );
-            
+
             $tempPath = $request->file('imagen')->getRealPath();
-            
+
             // Process and resize main image (max 1200px width)
             $mainImage = $manager->decodePath($tempPath);
             $mainImage->scale(width: 1200);
-            $mainEncoded = $mainImage->encodeUsingFormat(\Intervention\Image\Format::WEBP, quality: 80);
+            $mainEncoded = $mainImage->encodeUsingFormat(Format::WEBP, quality: 80);
             $mainPath = "vehiculos/{$uuid}.webp";
             Storage::disk('public')->put($mainPath, $mainEncoded->toString());
-            
+
             // Generate thumbnail (200x200)
             $thumbImage = $manager->decodePath($tempPath);
             $thumbImage->cover(width: 200, height: 200);
-            $thumbEncoded = $thumbImage->encodeUsingFormat(\Intervention\Image\Format::WEBP, quality: 80);
+            $thumbEncoded = $thumbImage->encodeUsingFormat(Format::WEBP, quality: 80);
             $thumbPath = "vehiculos/thumbs/{$uuid}.webp";
             Storage::disk('public')->put($thumbPath, $thumbEncoded->toString());
-            
+
             // Fix race condition: save new path BEFORE deleting old
             $oldPath = $vehiculo->imagen_url;
             $oldThumbPath = $vehiculo->imagen_thumb_url ?? null;
-            
+
             $vehiculo->imagen_url = $mainPath;
             $vehiculo->imagen_thumb_url = $thumbPath;
             $vehiculo->save();
-            
+
             // Delete old images AFTER save succeeds
-            if ($oldPath) Storage::disk('public')->delete($oldPath);
-            if ($oldThumbPath) Storage::disk('public')->delete($oldThumbPath);
+            if ($oldPath) {
+                Storage::disk('public')->delete($oldPath);
+            }
+            if ($oldThumbPath) {
+                Storage::disk('public')->delete($oldThumbPath);
+            }
 
             $vehiculo->load(['operador', 'mecanico']);
 
             return response()->json([
                 'message' => 'Imagen de vehículo subida exitosamente',
-                'vehiculo' => $vehiculo
+                'vehiculo' => $vehiculo,
             ]);
         }
 

@@ -4,19 +4,20 @@ namespace App\Filament\Resources;
 
 use App\Filament\Resources\ProductoResource\Pages;
 use App\Models\Producto;
+use BackedEnum;
+use Filament\Actions;
 use Filament\Forms;
 use Filament\Resources\Resource;
+use Filament\Schemas\Schema;
 use Filament\Tables;
 use Filament\Tables\Table;
-use Filament\Actions;
-use Filament\Schemas\Schema;
-use BackedEnum;
+use Illuminate\Database\Eloquent\Model;
 
 class ProductoResource extends Resource
 {
     protected static ?string $model = Producto::class;
 
-    protected static string | BackedEnum | null $navigationIcon = 'heroicon-o-rectangle-stack';
+    protected static string|BackedEnum|null $navigationIcon = 'heroicon-o-rectangle-stack';
 
     public static function form(Schema $schema): Schema
     {
@@ -72,12 +73,6 @@ class ProductoResource extends Resource
             ])
             ->recordActions([
                 Actions\EditAction::make(),
-                Actions\DeleteAction::make(),
-            ])
-            ->toolbarActions([
-                Actions\BulkActionGroup::make([
-                    Actions\DeleteBulkAction::make(),
-                ]),
             ]);
     }
 
@@ -95,5 +90,15 @@ class ProductoResource extends Resource
             'create' => Pages\CreateProducto::route('/create'),
             'edit' => Pages\EditProducto::route('/{record}/edit'),
         ];
+    }
+
+    public static function canDelete(Model $record): bool
+    {
+        return false;
+    }
+
+    public static function canDeleteAny(): bool
+    {
+        return false;
     }
 }

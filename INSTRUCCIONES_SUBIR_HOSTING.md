@@ -1,109 +1,56 @@
-# 📤 Archivos para Subir al Hosting (cPanel)
+# Publicación en cPanel
 
-## Timezone Fix - Backend
+Esta guía complementa `DEPLOY_README.md`; no autoriza mantenimiento por URL.
 
-### Archivos Modificados/Creados
+## Estructura correcta
 
-| # | Archivo Local | Ruta en Hosting | Prioridad |
-|---|--------------|-----------------|-----------|
-| 1 | `config/timezone.php` | `public_html/backsm.agrojurado.com/config/timezone.php` | 🔴 CRÍTICO |
-| 2 | `bootstrap/app.php` | `public_html/backsm.agrojurado.com/bootstrap/app.php` | 🔴 CRÍTICO |
-| 3 | `routes/api.php` | `public_html/backsm.agrojurado.com/routes/api.php` | 🔴 CRÍTICO |
-| 4 | `config/database.php` | `public_html/backsm.agrojurado.com/config/database.php` | 🟡 IMPORTANTE |
-| 5 | `app/Models/OrdenTrabajo.php` | `public_html/backsm.agrojurado.com/app/Models/OrdenTrabajo.php` | 🟡 IMPORTANTE |
-| 6 | `app/Models/WorkSession.php` | `public_html/backsm.agrojurado.com/app/Models/WorkSession.php` | 🟡 IMPORTANTE |
-| 7 | `app/Http/Controllers/Api/OrdenTrabajoApiController.php` | `public_html/backsm.agrojurado.com/app/Http/Controllers/Api/OrdenTrabajoApiController.php` | 🟡 IMPORTANTE |
-| 8 | `app/Http/Controllers/Api/WorkSessionApiController.php` | `public_html/backsm.agrojurado.com/app/Http/Controllers/Api/WorkSessionApiController.php` | 🟡 IMPORTANTE |
-| 9 | `clear_cache.php` | `public_html/backsm.agrojurado.com/clear_cache.php` | 🟢 UTILIDAD |
+```text
+/home/USUARIO/apps/semanur-backend/     # aplicación privada
+  app/
+  bootstrap/
+  config/
+  routes/
+  storage/
+  vendor/
+  public/
 
----
-
-## 📋 Instrucciones Paso a Paso
-
-### 1. Subir Archivos por FTP/cPanel
-
-1. Abre **File Manager** en cPanel o usa **FileZilla**
-2. Navega a: `public_html/backsm.agrojurado.com/`
-3. Sube los archivos marcados como 🔴 CRÍTICO primero
-4. Luego sube los archivos marcados como 🟡 IMPORTANTE
-5. El archivo `clear_cache.php` es opcional (utilidad temporal)
-
-### 2. Limpiar Cache
-
-Accede desde tu navegador:
-```
-https://backsm.agrojurado.com/clear_cache.php
+Dominio backsm.agrojurado.com
+Document root: /home/USUARIO/apps/semanur-backend/public
 ```
 
-Deberías ver:
-```
-✅ Cache limpiado exitosamente
-✅ Timezone configurada correctamente para Bogotá (UTC-5)
-```
+No ubique la aplicación completa dentro de `public_html`. Si el proveedor no
+permite seleccionar `public/` como raíz del dominio, el ambiente no cumple el
+baseline y debe cambiarse la configuración o el proveedor; no se corrige con un
+`.htaccess` que exponga la raíz del proyecto.
 
-### 3. Verificar Timezone
+## Operaciones
 
-Accede a:
-```
-https://backsm.agrojurado.com/api/verificar-hora
-```
+Use exclusivamente Terminal de cPanel/SSH o un pipeline autenticado:
 
-**Resultado esperado:**
-```json
-{
-  "timezone_php": "America/Bogota",
-  "carbon_now": "2026-03-16T21:00:00-05:00",
-  "carbon_timezone": "America/Bogota",
-  "offset": -5,
-  "mysql_now": "2026-03-16 21:00:00",
-  "mensaje": "Si offset es -5, está correcto para Bogotá"
-}
+```bash
+cd /home/USUARIO/apps/semanur-backend
+php scripts/operations/clear_cache.php
+php scripts/operations/link_storage.php
 ```
 
-### 4. Probar en la App
+No visite URLs como `/deploy.php`, `/clear_cache.php`, `/link_storage.php` ni
+diagnósticos. Esos nombres deben responder 403/404.
 
-1. Abre la app Flutter
-2. Inicia sesión
-3. Crea una orden de trabajo
-4. Verifica que la hora mostrada es la correcta (hora Bogotá)
+## Base de datos
 
-### 5. Eliminar Archivo Temporal
+- La base local no representa los registros de producción.
+- No importe una copia local sobre producción.
+- No ejecute `artisan migrate`.
+- Aplique solamente el SQL productivo aprobado, con preflight/postflight y
+  respaldo restaurable.
 
-**IMPORTANTE:** Después de verificar, elimina `clear_cache.php` por seguridad.
+## Verificación
 
----
-
-## ✅ Checklist de Verificación
-
-- [ ] Archivos subidos al hosting
-- [ ] Cache limpiado (clear_cache.php)
-- [ ] Timezone verificada (/api/verificar-hora)
-- [ ] Orden de trabajo creada
-- [ ] Hora correcta en la app
-- [ ] Archivo clear_cache.php eliminado
-
----
-
-## 🆘 Solución de Problemas
-
-### Error 404 en /api/verificar-hora
-- Verifica que `routes/api.php` se subió correctamente
-- Limpia el cache de rutas
-
-### Error 500
-- Revisa `storage/logs/laravel.log`
-- Verifica permisos en carpetas `storage/` y `bootstrap/cache/`
-
-### Timezone sigue incorrecta
-- Verifica que `config/timezone.php` existe
-- Limpia el cache de configuración
-- Reinicia PHP-FPM si es posible
-
----
-
-## 📞 Soporte
-
-Si tienes problemas, comparte:
-1. Captura de pantalla del error
-2. Resultado de `/api/verificar-hora`
-3. Logs de error (`storage/logs/laravel.log`)
+- `APP_DEBUG=false` y `APP_ENV=production`.
+- HTTPS obligatorio.
+- `SESSION_ENCRYPT=true`, `SESSION_SECURE_COOKIE=true`, `LOG_LEVEL=warning` y
+  `CORS_ALLOWED_ORIGINS` limitado al dominio web real.
+- `/up` responde sin revelar configuración.
+- Las rutas públicas operativas/diagnósticas responden 403/404.
+- El endpoint de versión publica la metadata de integridad del APK activo.
+- No hay índices de directorio ni acceso directo a evidencia/APKs.

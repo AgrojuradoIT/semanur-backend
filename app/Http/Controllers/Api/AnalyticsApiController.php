@@ -20,12 +20,19 @@ class AnalyticsApiController extends Controller
 {
     // ─── Aggregation constants (design SPEC-005/006) ────────────────────
     private const OT_ESTADOS = ['Abierta', 'En Progreso', 'Pendiente Auditoria', 'Aprobada', 'Cerrada'];
+
     private const OT_PRIORIDADES = ['Alta', 'Media', 'Baja'];
+
     private const OT_OPEN_STATES = ['Abierta', 'En Progreso'];
+
     private const DOC_SOON_DAYS = 30;
+
     private const OIL_SOON_THRESHOLD_KM = 500;
+
     private const HOROM_SOON_THRESHOLD_H = 50;
+
     private const ALERT_SEVERITY_RANK = ['vencido' => 0, 'proximo' => 1, 'informativo' => 2];
+
     private const ALERT_CAP = 8;
 
     public function getDashboard()
@@ -52,7 +59,7 @@ class AnalyticsApiController extends Controller
     public function getSummary()
     {
         $totalFuel = RegistroCombustible::sum('valor_total');
-        
+
         // Costo de repuestos (salidas de inventario vinculadas a OT)
         $totalMaintenance = DB::table('transaccion_inventarios')
             ->join('productos', 'transaccion_inventarios.producto_id', '=', 'productos.producto_id')
@@ -61,8 +68,8 @@ class AnalyticsApiController extends Controller
             ->first()->total ?? 0;
 
         return response()->json([
-            'total_fuel_cost' => (float)$totalFuel,
-            'total_maintenance_cost' => (float)$totalMaintenance,
+            'total_fuel_cost' => (float) $totalFuel,
+            'total_maintenance_cost' => (float) $totalMaintenance,
             'vehicle_count' => Vehiculo::count(),
             'open_orders' => OrdenTrabajo::where('estado', '!=', 'Cerrada')->count(),
         ]);
@@ -117,6 +124,7 @@ class AnalyticsApiController extends Controller
                 foreach ($group as $row) {
                     $total += (float) $row->transaccion_cantidad * (float) $row->producto_precio_costo;
                 }
+
                 return (object) [
                     'placa' => $placa,
                     'total_cost' => round($total, 2),
@@ -153,6 +161,7 @@ class AnalyticsApiController extends Controller
                 $p->porcentaje_nivel = $p->capacidad_maxima > 0
                     ? round(($p->producto_stock_actual / $p->capacidad_maxima) * 100, 1)
                     : null;
+
                 return $p;
             });
 
@@ -165,16 +174,16 @@ class AnalyticsApiController extends Controller
     public function getFuelConsumptionLast15Days()
     {
         $startDate = Carbon::now()->subDays(14)->startOfDay();
-        
+
         $records = RegistroCombustible::select(
             DB::raw('DATE(fecha) as date_label'),
             'tipo_combustible',
             DB::raw('SUM(cantidad_galones) as gallons')
         )
-        ->where('fecha', '>=', $startDate)
-        ->groupBy('date_label', 'tipo_combustible')
-        ->orderBy('date_label', 'asc')
-        ->get();
+            ->where('fecha', '>=', $startDate)
+            ->groupBy('date_label', 'tipo_combustible')
+            ->orderBy('date_label', 'asc')
+            ->get();
 
         // Generar arreglo continuo de los últimos 15 días
         $data = [];
@@ -194,9 +203,9 @@ class AnalyticsApiController extends Controller
             if (isset($data[$date])) {
                 $fuelType = strtolower($record->tipo_combustible);
                 if ($fuelType === 'gasolina') {
-                    $data[$date]['gasolina'] = round((float)$record->gallons, 2);
+                    $data[$date]['gasolina'] = round((float) $record->gallons, 2);
                 } elseif ($fuelType === 'acpm' || $fuelType === 'diesel') {
-                    $data[$date]['acpm'] = round((float)$record->gallons, 2);
+                    $data[$date]['acpm'] = round((float) $record->gallons, 2);
                 }
             }
         }
@@ -271,6 +280,7 @@ class AnalyticsApiController extends Controller
                 if ($ot->fecha_fin && $ot->fecha_fin < $dayStart) {
                     return false;
                 }
+
                 return true;
             })->count();
             $otTendencia[] = $count;
@@ -315,7 +325,7 @@ class AnalyticsApiController extends Controller
             ->flip();
 
         $semanasIndex = $semanas->keyBy(
-            fn (PreoperacionalSemana $semana) => $semana->vehiculo_id . '-' . $semana->template_id
+            fn (PreoperacionalSemana $semana) => $semana->vehiculo_id.'-'.$semana->template_id
         );
         $total = 0;
         $completados = 0;
@@ -330,7 +340,7 @@ class AnalyticsApiController extends Controller
             }
 
             $total++;
-            $semana = $semanasIndex->get($vehiculo->vehiculo_id . '-' . $template->id);
+            $semana = $semanasIndex->get($vehiculo->vehiculo_id.'-'.$template->id);
 
             if ($semana && $completedSemanaIds->has($semana->id)) {
                 $completados++;
@@ -418,6 +428,7 @@ class AnalyticsApiController extends Controller
                 if ($loan->fecha_devolucion && $loan->fecha_devolucion < $dayStart) {
                     return false;
                 }
+
                 return true;
             })->count();
             $loansTendencia[] = $count;
@@ -516,20 +527,48 @@ class AnalyticsApiController extends Controller
             ]);
         $movimientos = TransaccionInventario::query()
             ->with('producto:producto_id,producto_nombre')
-            ->select('transaccion_id', 'producto_id', 'transaccion_tipo', 'transaccion_cantidad', 'created_at')
+            ->select(
+                'transaccion_id',
+                'producto_id',
+                'transaccion_tipo',
+                'transaccion_cantidad',
+                'transaccion_motivo',
+                'transaccion_notas',
+                'reverses_transaction_id',
+                'transaccion_referencia_type',
+                'transaccion_referencia_id',
+                'created_at'
+            )
             ->orderByDesc('created_at')
             ->limit(self::ALERT_CAP)
             ->get()
-            ->map(fn (TransaccionInventario $movimiento): array => [
-                'type' => 'movimiento',
-                'id' => $movimiento->transaccion_id,
-                'producto_id' => $movimiento->producto_id,
-                'producto_nombre' => $movimiento->producto?->producto_nombre,
-                'titulo' => $movimiento->producto?->producto_nombre ?? "Movimiento #{$movimiento->transaccion_id}",
-                'descripcion' => ucfirst($movimiento->transaccion_tipo).' de inventario',
-                'at' => $movimiento->created_at,
-                'link' => ['name' => 'inventory'],
-            ]);
+            ->map(function (TransaccionInventario $movimiento): array {
+                $isReversal = $movimiento->reverses_transaction_id !== null
+                    || str_contains(strtolower((string) $movimiento->transaccion_motivo), 'revers');
+
+                $descripcion = ucfirst((string) $movimiento->transaccion_tipo).' de inventario';
+                if ($isReversal) {
+                    $refStr = $movimiento->reverses_transaction_id ? " a MOV-{$movimiento->reverses_transaction_id}" : '';
+                    $descripcion = "Reversión{$refStr}".($movimiento->transaccion_motivo ? " · {$movimiento->transaccion_motivo}" : '');
+                } elseif ($movimiento->transaccion_motivo) {
+                    $descripcion .= ' · '.$movimiento->transaccion_motivo;
+                }
+
+                if ($movimiento->transaccion_notas && $movimiento->transaccion_notas !== $movimiento->transaccion_motivo) {
+                    $descripcion .= ' ('.$movimiento->transaccion_notas.')';
+                }
+
+                return [
+                    'type' => 'movimiento',
+                    'id' => $movimiento->transaccion_id,
+                    'producto_id' => $movimiento->producto_id,
+                    'producto_nombre' => $movimiento->producto?->producto_nombre,
+                    'titulo' => ($isReversal ? '↩ Reversión: ' : '').($movimiento->producto?->producto_nombre ?? "Movimiento #{$movimiento->transaccion_id}"),
+                    'descripcion' => $descripcion,
+                    'at' => $movimiento->created_at,
+                    'link' => ['name' => 'inventory'],
+                ];
+            });
         $tanqueos = RegistroCombustible::query()
             ->with('vehiculo:vehiculo_id,placa')
             ->select('registro_id', 'vehiculo_id', 'tipo_combustible', 'cantidad_galones', 'fecha')
@@ -578,6 +617,9 @@ class AnalyticsApiController extends Controller
             ->select([
                 'vehiculo_id',
                 'placa',
+                'tipo',
+                'imagen_url',
+                'imagen_thumb_url',
                 'metodo_seguimiento',
                 'fecha_vencimiento_soat',
                 'fecha_vencimiento_tecnomecanica',
@@ -649,8 +691,11 @@ class AnalyticsApiController extends Controller
                         'kind' => 'vehiculo',
                         'id' => $vehiculo->vehiculo_id,
                         'label' => $vehiculo->placa,
+                        'tipo' => $vehiculo->tipo,
+                        'imagen_url' => $vehiculo->imagen_url,
+                        'imagen_thumb_url' => $vehiculo->imagen_thumb_url,
                     ],
-                    'detalle' => $dias < 0 ? 'Vencido ' . abs($dias) . 'd' : $dias . 'd',
+                    'detalle' => $dias < 0 ? 'Vencido '.abs($dias).'d' : $dias.'d',
                     'link' => ['name' => 'fleet'],
                     '_urgencia' => $dias,
                 ];
@@ -730,9 +775,12 @@ class AnalyticsApiController extends Controller
                     'kind' => 'vehiculo',
                     'id' => $vehiculo->vehiculo_id,
                     'label' => $vehiculo->placa,
+                    'tipo' => $vehiculo->tipo,
+                    'imagen_url' => $vehiculo->imagen_url,
+                    'imagen_thumb_url' => $vehiculo->imagen_thumb_url,
                 ],
                 'detalle' => $restante <= 0
-                    ? abs($restante) . " $unidad venc."
+                    ? abs($restante)." $unidad venc."
                     : "$restante $unidad",
                 'link' => ['name' => 'fleet'],
                 '_urgencia' => $restante,

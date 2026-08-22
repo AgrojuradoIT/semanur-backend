@@ -7,6 +7,8 @@ use App\Models\RegistroHorometro;
 use App\Models\Vehiculo;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Str;
 
 class HorometroApiController extends Controller
 {
@@ -32,13 +34,13 @@ class HorometroApiController extends Controller
 
         if ($request->valor_nuevo < $vehiculo->horometro_actual) {
             return response()->json([
-                'message' => 'El valor nuevo no puede ser menor al valor actual (' . $vehiculo->horometro_actual . ')'
+                'message' => 'El valor nuevo no puede ser menor al valor actual ('.$vehiculo->horometro_actual.')',
             ], 422);
         }
 
         try {
             return DB::transaction(function () use ($request, $vehiculo) {
-                $registro = new RegistroHorometro();
+                $registro = new RegistroHorometro;
                 $registro->vehiculo_id = $request->vehiculo_id;
                 $registro->valor_anterior = $vehiculo->horometro_actual;
                 $registro->valor_nuevo = $request->valor_nuevo;
@@ -52,11 +54,22 @@ class HorometroApiController extends Controller
                 return response()->json([
                     'message' => 'Horómetro actualizado correctamente',
                     'registro' => $registro->load('usuario'),
-                    'vehiculo' => $vehiculo
+                    'vehiculo' => $vehiculo,
                 ], 201);
             });
         } catch (\Exception $e) {
-            return response()->json(['message' => 'Error al registrar horómetro: ' . $e->getMessage()], 500);
+            $errorId = (string) Str::uuid();
+            Log::error('Error al registrar horómetro', [
+                'error_id' => $errorId,
+                'user_id' => $request->user()?->getKey(),
+                'vehiculo_id' => $request->input('vehiculo_id'),
+                'exception' => $e,
+            ]);
+
+            return response()->json([
+                'message' => 'No fue posible registrar el horómetro.',
+                'error_id' => $errorId,
+            ], 500);
         }
     }
 }

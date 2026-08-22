@@ -37,9 +37,13 @@ class UatBusinessFlowsTest extends TestCase
 
         $repuesto = $this->crearProducto($categoria->categoria_id, 'SKU-UAT-RP', 'Filtro aceite', 10);
         $herramienta = $this->crearProducto($categoria->categoria_id, 'SKU-UAT-HR', 'Llave mixta', 5);
+        $bodega = Bodega::create(['nombre' => 'Bodega Principal', 'tipo' => 'estandar']);
+        $this->setStockBodega($bodega, $repuesto, 10);
+        $this->setStockBodega($bodega, $herramienta, 5);
 
         Sanctum::actingAs($admin);
         $crearOt = $this->postJson('/api/ordenes-trabajo', [
+            'bodega_id' => $bodega->bodega_id,
             'vehiculo_id' => $vehiculo->vehiculo_id,
             'mecanico_asignado_id' => $mecanicoEmpleado->id,
             'prioridad' => 'Alta',
@@ -78,14 +82,14 @@ class UatBusinessFlowsTest extends TestCase
         $start->assertCreated();
         $sessionId = (int) $start->json('session.sesion_id');
 
-        $this->postJson('/api/sesiones-trabajo/' . $sessionId . '/stop', [
+        $this->postJson('/api/sesiones-trabajo/'.$sessionId.'/stop', [
             'notas' => 'Orden ejecutada',
         ])->assertOk();
 
         // Closing is an audit action; the assigned mechanic only needs taller.read/write
         // for the work session and can inspect the assigned work-order collection afterwards.
         Sanctum::actingAs($admin);
-        $this->patchJson('/api/ordenes-trabajo/' . $ordenId . '/estado', [
+        $this->patchJson('/api/ordenes-trabajo/'.$ordenId.'/estado', [
             'estado' => 'Cerrada',
         ])->assertOk();
 
@@ -118,6 +122,7 @@ class UatBusinessFlowsTest extends TestCase
 
         Sanctum::actingAs($admin);
         $response = $this->postJson('/api/combustible', [
+            'bodega_id' => $bodega->bodega_id,
             'tipo_destino' => 'empleado',
             'empleado_id' => $operadorEmpleado->id,
             'tipo_combustible' => 'acpm',
@@ -156,11 +161,14 @@ class UatBusinessFlowsTest extends TestCase
             'categoria_tipo' => 'herramienta',
         ]);
         $producto = $this->crearProducto($categoria->categoria_id, 'SKU-UAT-LOAN', 'Taladro', 6);
+        $bodega = Bodega::create(['nombre' => 'Bodega Principal', 'tipo' => 'estandar']);
+        $this->setStockBodega($bodega, $producto, 6);
         $vehiculo = $this->crearVehiculo('UAT202');
         [$lista, $itemCritico] = $this->crearListaYItem('tractor');
 
         Sanctum::actingAs($admin);
         $prestamo = $this->postJson('/api/prestamos', [
+            'bodega_id' => $bodega->bodega_id,
             'producto_id' => $producto->producto_id,
             'mecanico_id' => $mecanicoEmpleado->id,
             'prestamo_cantidad' => 2,
@@ -170,7 +178,7 @@ class UatBusinessFlowsTest extends TestCase
         $prestamoId = (int) $prestamo->json('prestamo.prestamo_id');
         $this->assertSame(4.0, (float) $producto->fresh()->producto_stock_actual);
 
-        $this->postJson('/api/prestamos/' . $prestamoId . '/devolver', [
+        $this->postJson('/api/prestamos/'.$prestamoId.'/devolver', [
             'estado' => 'devuelto',
             'notas' => 'Devuelto en buen estado',
         ])->assertOk();
@@ -188,7 +196,7 @@ class UatBusinessFlowsTest extends TestCase
         $check->assertCreated();
         $check->assertJsonPath('estado_final', 'rechazado');
 
-        $history = $this->getJson('/api/checklists/history?vehiculo_id=' . $vehiculo->vehiculo_id);
+        $history = $this->getJson('/api/checklists/history?vehiculo_id='.$vehiculo->vehiculo_id);
         $history->assertOk();
         $this->assertNotEmpty($history->json('data'));
     }
@@ -245,5 +253,16 @@ class UatBusinessFlowsTest extends TestCase
         ]);
 
         return [$lista, $item];
+    }
+
+    private function setStockBodega(Bodega $bodega, Producto $producto, float $cantidad): void
+    {
+        DB::table('bodega_producto')->insert([
+            'bodega_id' => $bodega->bodega_id,
+            'producto_id' => $producto->producto_id,
+            'cantidad' => $cantidad,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
     }
 }
