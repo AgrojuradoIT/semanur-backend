@@ -3,12 +3,14 @@
 namespace App\Services\Inventory\Orders;
 
 use App\Domain\InventoryOrders\AlertaTipo;
+use App\Events\InventoryOrders\PedidoAlertaEmitida;
 use App\Models\PedidoAlerta;
 use App\Models\PedidoEvento;
 use App\Models\PedidoInventario;
 use App\Models\User;
 use App\Policies\PedidoInventarioPolicy;
 use Illuminate\Database\Eloquent\Collection;
+use Illuminate\Support\Facades\Log;
 
 /**
  * Alertas Web persistentes del flujo de pedidos (plan sección 12).
@@ -82,6 +84,7 @@ class PedidoAlertaService
     public function crearParaEvento(PedidoEvento $evento, string $tipo, iterable $destinatarios): int
     {
         $creadas = 0;
+        $nuevas = [];
 
         foreach ($destinatarios as $destinatario) {
             $alerta = PedidoAlerta::query()->firstOrCreate(
@@ -97,10 +100,49 @@ class PedidoAlertaService
 
             if ($alerta->wasRecentlyCreated) {
                 $creadas++;
+                $nuevas[] = $alerta;
             }
         }
 
+        $this->emitirTiempoReal($evento, $nuevas);
+
         return $creadas;
+    }
+
+    /**
+     * Realtime opt-in U11: un evento `PedidoAlertaEmitida` (encolado) por
+     * alerta recién creada, solo si `inventory_orders.realtime.enabled`.
+     *
+     * - Con el flag apagado (default) no cambia NADA: ni despacho, ni filas,
+     *   ni llamadas externas.
+     * - Nunca rompe la transacción que crea las alertas: cualquier fallo del
+     *   despacho se registra (solo `alerta_id`, sin datos sensibles) y se
+     *   traga. La bandeja persistida es la fuente de verdad; el realtime solo
+     *   acelera la UI.
+     * - No toca el pipeline legacy: cero `Notificacion`, cero FCM.
+     *
+     * Nota deliberada: el despacho es síncrono aquí (no `DB::afterCommit`)
+     * porque el evento es `ShouldBroadcast` (encolado, procesado fuera del
+     * request en producción) y porque `afterCommit` no es observable bajo las
+     * transacciones de `RefreshDatabase` en pruebas. Un ping fantasma tras un
+     * rollback es inofensivo: el cliente revalida contra la bandeja.
+     */
+    protected function emitirTiempoReal(PedidoEvento $evento, array $alertas): void
+    {
+        if ($alertas === [] || ! (bool) config('inventory_orders.realtime.enabled', false)) {
+            return;
+        }
+
+        foreach ($alertas as $alerta) {
+            try {
+                PedidoAlertaEmitida::dispatch($alerta, $evento);
+            } catch (\Throwable $e) {
+                Log::warning('No fue posible emitir la alerta de pedido en tiempo real.', [
+                    'alerta_id' => $alerta->alerta_id,
+                    'error' => $e->getMessage(),
+                ]);
+            }
+        }
     }
 
     /**

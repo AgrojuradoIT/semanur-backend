@@ -113,4 +113,24 @@ return [
         'lease_seconds' => (int) env('INVENTORY_ORDERS_OCR_LEASE_SECONDS', 120),
         'fake_fixtures_path' => env('INVENTORY_ORDERS_OCR_FAKE_FIXTURES_PATH', base_path('tests/fixtures/ocr')),
     ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Realtime opt-in (U11)
+    |--------------------------------------------------------------------------
+    |
+    | Delivery of `pedido_alertas` over private broadcast channels is OPT-IN and
+    | defaults to OFF everywhere. The persisted inbox (`pedido_alertas` + its
+    | polling API) remains the working path and the source of truth; realtime
+    | only accelerates the UI.
+    |
+    | Enabling this flag is NOT enough by itself: the operator must also set a
+    | real BROADCAST_CONNECTION (Reverb/Pusher) and keep a broadcast server
+    | running. Cero FCM ever for these events, and the legacy Notificacion
+    | pipeline, its counters and the `user.{id}` channel are never touched.
+    |
+    */
+    'realtime' => [
+        'enabled' => (bool) env('INVENTORY_ORDERS_REALTIME_ENABLED', false),
+    ],
 ];
