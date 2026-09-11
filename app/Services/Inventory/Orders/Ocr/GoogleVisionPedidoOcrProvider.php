@@ -87,6 +87,12 @@ final class GoogleVisionPedidoOcrProvider implements PedidoOcrProvider
             ? trim((string) $config['credentials_path'])
             : '';
 
+        if ($rutaCredenciales !== '' && ! $this->esRutaAbsoluta($rutaCredenciales)) {
+            // Las rutas relativas se resuelven contra la raiz del proyecto para
+            // que funcionen igual desde la web, la cola y el cron (el CWD varia).
+            $rutaCredenciales = base_path($rutaCredenciales);
+        }
+
         if ($rutaCredenciales === '' || ! is_file($rutaCredenciales) || ! is_readable($rutaCredenciales)) {
             throw new OcrProveedorNoHabilitadoException(
                 'proveedor_no_habilitado: proveedor google seleccionado pero sin archivo de credenciales '
@@ -144,6 +150,11 @@ final class GoogleVisionPedidoOcrProvider implements PedidoOcrProvider
     /**
      * @return array<string, mixed>
      */
+    private function esRutaAbsoluta(string $ruta): bool
+    {
+        return (bool) preg_match('#^(?:[A-Za-z]:[\\\\/]|\\\\\\\\|/)#', $ruta);
+    }
+
     private function leerCredenciales(string $ruta): array
     {
         $contenido = file_get_contents($ruta);

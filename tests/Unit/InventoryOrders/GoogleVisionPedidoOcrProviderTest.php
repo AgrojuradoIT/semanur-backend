@@ -137,6 +137,36 @@ class GoogleVisionPedidoOcrProviderTest extends TestCase
         $this->assertSame(base64_encode('bytes-falsos-de-imagen'), $cuerpo['requests'][0]['image']['content']);
     }
 
+    public function test_ruta_relativa_se_resuelve_contra_base_path(): void
+    {
+        $relativa = 'storage/app/credenciales-relativa-probe.json';
+        $absoluta = base_path($relativa);
+
+        file_put_contents($absoluta, (string) json_encode([
+            'type' => 'service_account',
+            'client_email' => 'falso@proyecto-falso.iam.gserviceaccount.com',
+            'private_key' => 'clave-falsa-solo-para-gating',
+        ]));
+
+        try {
+            $config = $this->configHabilitada();
+            $config['credentials_path'] = $relativa;
+
+            $proveedor = $this->proveedor($config, [
+                new Response(200, [], (string) json_encode(['responses' => [[]]])),
+            ]);
+
+            $crudo = $proveedor->extraer($this->imagen, 'image/jpeg');
+
+            $this->assertSame('google', $crudo['provider']);
+            $this->assertCount(1, $this->historial);
+        } finally {
+            if (is_file($absoluta)) {
+                unlink($absoluta);
+            }
+        }
+    }
+
     public function test_errores_401_403_400_son_terminales(): void
     {
         foreach ([401, 403, 400] as $estado) {
