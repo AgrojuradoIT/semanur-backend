@@ -19,7 +19,14 @@ use App\Http\Controllers\Api\ProductoApiController;
 use App\Http\Controllers\Api\ProgramacionApiController;
 use App\Http\Controllers\Api\VehiculoApiController;
 use App\Http\Controllers\Api\VehiculoDocumentoApiController;
+use App\Http\Controllers\Api\Web\PedidoAlertaController;
+use App\Http\Controllers\Api\Web\PedidoDocumentoController;
+use App\Http\Controllers\Api\Web\PedidoInventarioController;
+use App\Http\Controllers\Api\Web\PedidoNovedadController;
+use App\Http\Controllers\Api\Web\PedidoOcrIntentoController;
+use App\Http\Controllers\Api\Web\PedidoRecepcionController;
 use App\Http\Controllers\Api\WorkSessionApiController;
+use App\Http\Middleware\EnsureInventoryOrdersEnabled;
 use App\Models\Bodega;
 use App\Models\Cargo;
 use App\Models\Categoria;
@@ -61,7 +68,7 @@ Route::middleware(['auth:sanctum', 'employee.active', 'throttle:api'])->group(fu
     Route::get('/combustible/reportes', [CombustibleApiController::class, 'reportes'])->middleware('permission:combustible.read,analitica.read');
 
     Route::middleware('permission:combustible.write')->group(function () {
-        Route::post('/combustible', [CombustibleApiController::class, 'store'])->middleware('role:admin,jefe_taller,auxiliar_bodega');
+        Route::post('/combustible', [CombustibleApiController::class, 'store'])->middleware('role:admin,contabilidad,jefe_taller,auxiliar_bodega');
         Route::put('/combustible/{id}', [CombustibleApiController::class, 'update'])->middleware('role:admin');
         Route::delete('/combustible/{id}', [CombustibleApiController::class, 'destroy'])->middleware('role:admin');
     });
@@ -109,11 +116,11 @@ Route::middleware(['auth:sanctum', 'employee.active', 'throttle:api'])->group(fu
     Route::get('/productos/{id}', [ProductoApiController::class, 'show'])->middleware('permission:inventario.read,taller.read,prestamos.read,combustible.read,analitica.read');
 
     Route::middleware('permission:inventario.write')->group(function () {
-        Route::post('/productos', [ProductoApiController::class, 'store'])->middleware('role:admin,jefe_taller,auxiliar_bodega');
+        Route::post('/productos', [ProductoApiController::class, 'store'])->middleware('role:admin,contabilidad,jefe_taller,auxiliar_bodega');
         Route::put('/productos/{id}', [ProductoApiController::class, 'update'])->middleware('role:admin');
         Route::delete('/productos/{id}', [ProductoApiController::class, 'destroy'])->middleware('role:admin');
-        Route::post('/productos/import', [ProductoApiController::class, 'import'])->middleware('role:admin,jefe_taller,auxiliar_bodega');
-        Route::post('/inventario/import-compras', [InventarioImportApiController::class, 'importCompras'])->middleware('role:admin,jefe_taller,auxiliar_bodega');
+        Route::post('/productos/import', [ProductoApiController::class, 'import'])->middleware('role:admin,contabilidad,jefe_taller,auxiliar_bodega');
+        Route::post('/inventario/import-compras', [InventarioImportApiController::class, 'importCompras'])->middleware('role:admin,contabilidad,jefe_taller,auxiliar_bodega');
     });
 
     // ─── Taller (OT + Sesiones) ────────────────────────
@@ -125,7 +132,7 @@ Route::middleware(['auth:sanctum', 'employee.active', 'throttle:api'])->group(fu
         Route::post('/ordenes-trabajo', [OrdenTrabajoApiController::class, 'store']);
         Route::put('/ordenes-trabajo/{id}', [OrdenTrabajoApiController::class, 'update']);
         Route::patch('/ordenes-trabajo/{id}/estado', [OrdenTrabajoApiController::class, 'updateStatus']);
-        Route::post('/ordenes-trabajo/{id}/repuestos', [OrdenTrabajoApiController::class, 'addRepuestos'])->middleware('role:admin,jefe_taller,auxiliar_bodega');
+        Route::post('/ordenes-trabajo/{id}/repuestos', [OrdenTrabajoApiController::class, 'addRepuestos'])->middleware('role:admin,contabilidad,jefe_taller,auxiliar_bodega');
         Route::delete('/ordenes-trabajo/{id}', [OrdenTrabajoApiController::class, 'destroy'])->middleware('role:admin');
         Route::post('/sesiones-trabajo/start', [WorkSessionApiController::class, 'start']);
         Route::post('/sesiones-trabajo/{id}/stop', [WorkSessionApiController::class, 'stop']);
@@ -179,13 +186,13 @@ Route::middleware(['auth:sanctum', 'employee.active', 'throttle:api'])->group(fu
     Route::get('/prestamos', [PrestamoApiController::class, 'index'])->middleware('permission:prestamos.read');
 
     Route::middleware('permission:prestamos.write')->group(function () {
-        Route::post('/prestamos', [PrestamoApiController::class, 'store'])->middleware('role:admin,jefe_taller,auxiliar_bodega');
+        Route::post('/prestamos', [PrestamoApiController::class, 'store'])->middleware('role:admin,contabilidad,jefe_taller,auxiliar_bodega');
         Route::post('/prestamos/{id}/devolver', [PrestamoApiController::class, 'devolver']);
     });
 
     // ─── Movimientos de Inventario ─────────────────────
     Route::get('/movimientos', [MovimientoInventarioApiController::class, 'index'])->middleware('permission:movimientos.read');
-    Route::post('/movimientos', [MovimientoInventarioApiController::class, 'store'])->middleware('permission:movimientos.write', 'role:admin,jefe_taller,auxiliar_bodega');
+    Route::post('/movimientos', [MovimientoInventarioApiController::class, 'store'])->middleware('permission:movimientos.write', 'role:admin,contabilidad,jefe_taller,auxiliar_bodega');
 
     // ─── Usuarios ──────────────────────────────────────
     Route::get('/users', [AuthController::class, 'index'])->middleware('permission:usuarios.read');
@@ -224,3 +231,69 @@ Route::middleware(['auth:sanctum', 'employee.active', 'throttle:api'])->group(fu
         Route::get('/analytics/fuel-stock', [AnalyticsApiController::class, 'getFuelStock']);
     });
 });
+
+// ─── Pedidos de inventario (Web: contabilidad) ─────────
+// El middleware del flag va primero para ocultar todo el grupo con 404 incluso
+// sin autenticar. Se excluye SubstituteBindings del grupo api para que el
+// ordenamiento por prioridad de Laravel no mueva auth antes del flag (estas
+// rutas reciben {order} como string y no usan route model binding). La matriz
+// de roles/permisos de la sección 7 se evalúa con PedidoInventarioPolicy desde
+// el controlador, no con allowlist de ruta, para respetar habilitaciones
+// explícitas por configuración.
+Route::prefix('web/inventory-orders')
+    ->withoutMiddleware(\Illuminate\Routing\Middleware\SubstituteBindings::class)
+    ->middleware([EnsureInventoryOrdersEnabled::class, 'auth:sanctum', 'employee.active', 'throttle:api'])
+    ->group(function (): void {
+        Route::get('/', [PedidoInventarioController::class, 'index']);
+        Route::post('/', [PedidoInventarioController::class, 'store']);
+        Route::get('/{order}', [PedidoInventarioController::class, 'show']);
+        Route::patch('/{order}', [PedidoInventarioController::class, 'update']);
+        Route::post('/{order}/publish', [PedidoInventarioController::class, 'publish']);
+        Route::post('/{order}/return-for-correction', [PedidoInventarioController::class, 'returnForCorrection']);
+        Route::post('/{order}/cancel', [PedidoInventarioController::class, 'cancel']);
+        Route::post('/{order}/documents', [PedidoDocumentoController::class, 'store']);
+        Route::get('/{order}/documents/{document}/content', [PedidoDocumentoController::class, 'content'])
+            ->whereNumber('document');
+        Route::get('/{order}/ocr-attempts/{attempt}', [PedidoOcrIntentoController::class, 'show'])
+            ->whereNumber('attempt');
+        Route::post('/{order}/documents/{document}/reprocess', [PedidoOcrIntentoController::class, 'reprocess'])
+            ->whereNumber('document')
+            ->middleware('throttle:10,1');
+        // Recepción física (U6): sesión, conteo, ficha de producto nuevo y
+        // confirmación atómica. Sin route-model binding: la pertenencia se
+        // valida en el controlador.
+        Route::post('/{order}/receipts', [PedidoRecepcionController::class, 'store']);
+        Route::put('/{order}/receipts/{receipt}/lines/{line}', [PedidoRecepcionController::class, 'updateLine'])
+            ->whereNumber('receipt')
+            ->whereNumber('line');
+        Route::patch('/{order}/lines/{line}/catalog-draft', [PedidoRecepcionController::class, 'catalogDraft'])
+            ->whereNumber('line');
+        Route::post('/{order}/receipts/{receipt}/confirm', [PedidoRecepcionController::class, 'confirm'])
+            ->whereNumber('receipt');
+        // Novedades y firma de desfase (U7): respuestas documentales y la
+        // autorización D1 con recepción combinada opcional. No tocan stock por
+        // sí mismas; la confirmación sigue siendo la única puerta de ingreso.
+        Route::post('/{order}/discrepancies/{issue}/responses', [PedidoNovedadController::class, 'respond'])
+            ->whereNumber('issue');
+        Route::post('/{order}/discrepancies/{issue}/authorize', [PedidoNovedadController::class, 'authorizeDesfase'])
+            ->whereNumber('issue');
+        // Historial paginado de eventos con actor y cambios relevantes.
+        Route::get('/{order}/history', [PedidoInventarioController::class, 'history']);
+        // Recuperación de operaciones idempotentes (plan sección 17): alcance
+        // actor+pedido y allowlist de comandos. Tras una respuesta perdida la
+        // UI consulta aquí antes de ofrecer repetir.
+        Route::get('/{order}/operations/{command}/{operation_uuid}', [PedidoInventarioController::class, 'operation'])
+            ->where('command', '[a-z_]+');
+    });
+
+// ─── Bandeja Web de alertas de pedidos (U5) ────────────
+// Persistencia Web propia: NO usa el pipeline legacy de Notificacion/FCM ni
+// altera sus contadores. Mismo flag y mismas guardas que el grupo anterior.
+Route::prefix('web/inventory-order-alerts')
+    ->withoutMiddleware(\Illuminate\Routing\Middleware\SubstituteBindings::class)
+    ->middleware([EnsureInventoryOrdersEnabled::class, 'auth:sanctum', 'employee.active', 'throttle:api'])
+    ->group(function (): void {
+        Route::get('/', [PedidoAlertaController::class, 'index']);
+        Route::post('/{alert}/read', [PedidoAlertaController::class, 'read'])
+            ->whereNumber('alert');
+    });

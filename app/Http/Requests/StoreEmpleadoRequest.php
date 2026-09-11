@@ -46,6 +46,7 @@ class StoreEmpleadoRequest extends FormRequest
                 'required_if:crear_usuario,true',
                 'nullable',
                 Rule::in(['admin', 'jefe_taller', 'auxiliar_bodega', 'mecanico', 'operador', 'operativo', 'visualizador', 'almacenista']),
+                Rule::in(['admin', 'jefe_taller', 'auxiliar_bodega', 'mecanico', 'operador', 'operativo', 'visualizador', 'almacenista', 'contabilidad']),
             ],
         ];
     }
