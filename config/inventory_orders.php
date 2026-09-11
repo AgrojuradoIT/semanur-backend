@@ -91,14 +91,21 @@ return [
     |--------------------------------------------------------------------------
     |
     | `provider` defaults to `fake` (deterministic fixtures, no network). The
-    | real Google adapter (D2) is deferred: pointing to `google` registers a
-    | stub that fails cleanly with error_code proveedor_no_habilitado and never
-    | touches the network, the SDK or composer.json.
+    | real Google adapter (D2, U12) is implemented but OPT-IN: pointing to
+    | `google` without `ocr.google.enabled=true` plus a readable server-side
+    | credentials file fails closed with error_code proveedor_no_habilitado and
+    | performs zero network attempts.
     |
     | `config_version` participates in the attempt work key: a reprocess or a
     | configuration change creates a new generation instead of overwriting a
     | previous result. `lease_seconds` must exceed `timeout`; it is enforced as
     | max(timeout + 30, lease_seconds).
+    |
+    | `google` block (U12): all values are server-side only. The service-account
+    | JSON lives at `credentials_path`, which must be OUTSIDE public/ and the
+    | repo, gitignored, and readable only by the app user (0600). It is never
+    | logged, never included in exceptions or API responses. `project_id` is
+    | informational (used only for redacted operational logs).
     |
     */
     'ocr' => [
@@ -112,6 +119,16 @@ return [
         'backoff_max_seconds' => (int) env('INVENTORY_ORDERS_OCR_BACKOFF_MAX_SECONDS', 300),
         'lease_seconds' => (int) env('INVENTORY_ORDERS_OCR_LEASE_SECONDS', 120),
         'fake_fixtures_path' => env('INVENTORY_ORDERS_OCR_FAKE_FIXTURES_PATH', base_path('tests/fixtures/ocr')),
+        'google' => [
+            'enabled' => (bool) env('INVENTORY_ORDERS_OCR_GOOGLE_ENABLED', false),
+            'project_id' => env('GOOGLE_CLOUD_PROJECT'),
+            'credentials_path' => env('GOOGLE_APPLICATION_CREDENTIALS'),
+            'timeout' => (int) env('INVENTORY_ORDERS_OCR_GOOGLE_TIMEOUT', 60),
+            'endpoint' => (string) env(
+                'INVENTORY_ORDERS_OCR_GOOGLE_ENDPOINT',
+                'https://vision.googleapis.com/v1/images:annotate'
+            ),
+        ],
     ],
 
     /*
