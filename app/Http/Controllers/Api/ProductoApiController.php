@@ -207,8 +207,8 @@ class ProductoApiController extends Controller
     public function import()
     {
         return response()->json([
-            'message' => 'Este importador fue retirado. Use /api/inventario/import-compras.',
-            'replacement' => '/api/inventario/import-compras',
+            'message' => 'Este importador fue retirado. Registre la compra como pedido y confirme la recepción física en bodega.',
+            'replacement' => '/api/web/inventory-orders',
         ], 410);
     }
 }

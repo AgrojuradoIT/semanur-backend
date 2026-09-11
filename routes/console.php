@@ -26,6 +26,29 @@ Schedule::command('app:purge-notifications')
     ->timezone('America/Bogota')
     ->withoutOverlapping();
 
+/*
+|--------------------------------------------------------------------------
+| Pedidos de inventario — U9 (plan secciones 10 y 16)
+|--------------------------------------------------------------------------
+| Outbox de eventos, recolección de huérfanos e integridad del ledger.
+| El corte CSV (410) no depende de estos crones; solo observan el flujo
+| nuevo detrás del flag INVENTORY_ORDERS_ENABLED.
+*/
+Schedule::command('inventory-orders:dispatch-events')
+    ->everyFiveMinutes()
+    ->timezone('America/Bogota')
+    ->withoutOverlapping();
+
+Schedule::command('inventory-orders:reap-document-orphans')
+    ->dailyAt('03:30')
+    ->timezone('America/Bogota')
+    ->withoutOverlapping();
+
+Schedule::command('inventory-orders:check-integrity')
+    ->dailyAt('06:30')
+    ->timezone('America/Bogota')
+    ->withoutOverlapping();
+
 Artisan::command('app:sync-docs', function () {
     $this->info('Iniciando sincronizacion de vencimientos de documentos en vehiculos...');
     \App\Models\Vehiculo::all()->each(function($v) {
