@@ -111,6 +111,10 @@ class PedidoDualEngineTest extends TestCase
         $this->pdo->exec("INSERT INTO `{$parent}` (etiqueta) VALUES ('probe')");
         $parentId = (int) $this->pdo->lastInsertId();
 
+        // Hijo que referencia al padre: sin esta fila el DELETE no viola nada
+        // y RESTRICT no tendria que rechazar.
+        $insert->execute([$parentId, null, null]);
+
         $restrictRejected = false;
 
         try {
