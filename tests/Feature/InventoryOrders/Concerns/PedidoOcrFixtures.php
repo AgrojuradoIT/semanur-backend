@@ -42,6 +42,7 @@ trait PedidoOcrFixtures
 
     protected function limpiarDocumentosOcr(): void
     {
+        Storage::fake('local');
         Storage::disk('local')->deleteDirectory('pedidos');
     }
 
