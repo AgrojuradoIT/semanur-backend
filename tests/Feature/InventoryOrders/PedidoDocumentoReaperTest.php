@@ -24,14 +24,11 @@ class PedidoDocumentoReaperTest extends TestCase
             'inventory_orders.documents.disk' => 'local',
         ]);
 
-        Storage::disk('local')->deleteDirectory('pedidos');
-    }
-
-    protected function tearDown(): void
-    {
-        Storage::disk('local')->deleteDirectory('pedidos');
-
-        parent::tearDown();
+        // FIX-1 (#2433): disco aislado por test. Sin esto, el
+        // deleteDirectory('pedidos') borraba el disco local real.
+        // El fake conserva un path() temporal real, por lo que
+        // envejecer() vía touch() sigue funcionando.
+        Storage::fake('local');
     }
 
     public function test_dry_run_lists_but_never_deletes_referenced_or_recent_objects(): void

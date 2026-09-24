@@ -31,14 +31,9 @@ class PedidoDocumentoUploadTest extends TestCase
         config(['inventory_orders.enabled' => true]);
         $this->withHeaders(['Accept' => 'application/json']);
         Queue::fake();
-        Storage::disk('local')->deleteDirectory('pedidos');
-    }
-
-    protected function tearDown(): void
-    {
-        Storage::disk('local')->deleteDirectory('pedidos');
-
-        parent::tearDown();
+        // FIX-1 (#2433): disco aislado por test. Sin esto, el
+        // deleteDirectory('pedidos') borraba el disco local real.
+        Storage::fake('local');
     }
 
     // ─── Camino feliz y layout privado ────────────────────
@@ -361,6 +356,24 @@ class PedidoDocumentoUploadTest extends TestCase
 
         $this->assertDatabaseCount('pedido_documentos', 0);
         $this->assertSame([], Storage::disk('local')->allFiles('pedidos'));
+    }
+
+    // ─── FIX-1 (#2433): preservación de archivos ajenos ───
+
+    public function test_preexisting_foreign_files_under_pedidos_are_preserved(): void
+    {
+        // Archivo ajeno preexistente bajo el prefijo pedidos/.
+        Storage::disk('local')->put('pedidos/_externo/preservar.txt', 'no-borrar');
+
+        Sanctum::actingAs($this->usuario('contabilidad'));
+        $pedido = $this->pedido();
+        $this->postDocumento($pedido, PedidoDocumentoService::ROL_FACTURA)->assertStatus(201);
+
+        $this->assertTrue(
+            Storage::disk('local')->exists('pedidos/_externo/preservar.txt'),
+            'Un archivo preexistente ajeno bajo pedidos/ no debe borrarse.',
+        );
+        $this->assertSame('no-borrar', Storage::disk('local')->get('pedidos/_externo/preservar.txt'));
     }
 
     private function urlDocumentos(PedidoInventario $pedido): string

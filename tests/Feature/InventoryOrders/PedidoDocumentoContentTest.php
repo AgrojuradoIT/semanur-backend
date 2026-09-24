@@ -24,14 +24,9 @@ class PedidoDocumentoContentTest extends TestCase
         config(['inventory_orders.enabled' => true]);
         $this->withHeaders(['Accept' => 'application/json']);
         Queue::fake();
-        Storage::disk('local')->deleteDirectory('pedidos');
-    }
-
-    protected function tearDown(): void
-    {
-        Storage::disk('local')->deleteDirectory('pedidos');
-
-        parent::tearDown();
+        // FIX-1 (#2433): disco aislado por test. Sin esto, el
+        // deleteDirectory('pedidos') borraba el disco local real.
+        Storage::fake('local');
     }
 
     public function test_content_sets_private_security_headers_and_never_leaks_storage_keys(): void
