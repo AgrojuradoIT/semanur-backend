@@ -3,6 +3,7 @@
 namespace App\Jobs;
 
 use App\Models\PedidoOcrIntento;
+use App\Services\Inventory\Orders\Ocr\OcrProcesamientoResultado;
 use App\Services\Inventory\Orders\PedidoOcrService;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
@@ -19,6 +20,8 @@ use Throwable;
  * - timeout y tries salen de config; timeout 60 s por defecto.
  * - Backoff exponencial con jitter para errores reintentables (429/5xx/timeout).
  * - Idempotente: un intento terminal/vigente produce no-op.
+ * - Un no-op por lease activo en otro worker relanza para reintentar en
+ *   lugar de confirmar el mensaje en falso (FIX-2 #2430).
  */
 class ProcesarPedidoOcr implements ShouldQueue
 {
@@ -58,6 +61,12 @@ class ProcesarPedidoOcr implements ShouldQueue
 
         if ($resultado->esReintentable()) {
             throw new RuntimeException($resultado->mensaje ?? 'OCR reintentable; se aplicará backoff.');
+        }
+
+        if ($resultado->resultado === OcrProcesamientoResultado::NO_OP
+            && is_string($resultado->mensaje)
+            && mb_stripos($resultado->mensaje, 'lease activo') !== false) {
+            throw new RuntimeException($resultado->mensaje);
         }
     }
 

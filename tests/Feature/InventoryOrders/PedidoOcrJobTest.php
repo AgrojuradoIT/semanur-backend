@@ -154,6 +154,63 @@ class PedidoOcrJobTest extends TestCase
         $this->assertSame('intentos_agotados', $intento->error_code);
     }
 
+    public function test_handle_con_lease_vivo_reintenta_en_lugar_de_confirmar_en_falso(): void
+    {
+        $actor = $this->usuario('contabilidad');
+        $pedido = $this->pedido();
+        $documento = $this->documentoOcr($pedido);
+        $service = app(PedidoOcrService::class);
+        $intento = $service->solicitar($documento, PedidoOcrService::ORIGEN_UPLOAD, $actor);
+
+        // Otro worker tiene el lease vivo (redelivery tras muerte del worker
+        // original: timeout 60, lease 120, redelivery a los 90).
+        $intento->estado = 'procesando';
+        $intento->lease_token = 'lease-otro-worker';
+        $intento->lease_expires_at = now()->addSeconds(120);
+        $intento->save();
+
+        $job = new ProcesarPedidoOcr((int) $intento->intento_id);
+
+        try {
+            $job->handle($service);
+            $this->fail('Un no-op por lease activo debe relanzar para reintentar, no confirmar en falso.');
+        } catch (RuntimeException $exception) {
+            $this->assertStringContainsString('lease activo', mb_strtolower($exception->getMessage()));
+        }
+
+        $intento->refresh();
+        $this->assertSame('procesando', $intento->estado);
+        $this->assertSame('lease-otro-worker', $intento->lease_token);
+        $this->assertSame(0, $intento->intentos);
+    }
+
+    public function test_failed_con_lease_vivo_no_queda_en_procesando_silencioso(): void
+    {
+        $actor = $this->usuario('contabilidad');
+        $pedido = $this->pedido();
+        $documento = $this->documentoOcr($pedido);
+        $service = app(PedidoOcrService::class);
+        $intento = $service->solicitar($documento, PedidoOcrService::ORIGEN_UPLOAD, $actor);
+
+        $intento->estado = 'procesando';
+        $intento->lease_token = 'lease-vivo';
+        $intento->lease_expires_at = now()->addSeconds(120);
+        $intento->save();
+
+        $job = new ProcesarPedidoOcr((int) $intento->intento_id);
+        $job->failed(new RuntimeException('cola agotada'));
+
+        $intento->refresh();
+        $this->assertSame('fallido', $intento->estado);
+        $this->assertSame('lease_vivo_al_agotar', $intento->error_code);
+        $this->assertNotNull($intento->finished_at);
+        $this->assertNull($intento->lease_token);
+        $this->assertDatabaseHas('pedido_eventos', [
+            'pedido_id' => $pedido->pedido_id,
+            'event_type' => 'ocr_fallido',
+        ]);
+    }
+
     public function test_job_respeta_conexion_cola_timeout_y_tries_configurados(): void
     {
         config([

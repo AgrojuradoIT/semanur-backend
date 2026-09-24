@@ -158,7 +158,7 @@ class PedidoOcrService
         $lease = $this->reclamar((int) $intento->intento_id);
 
         if ($lease === null) {
-            return OcrProcesamientoResultado::noOp('El intento OCR no es reclamable (terminal, vigente o con lease activo).');
+            return $this->noOpNoReclamable((int) $intento->intento_id);
         }
 
         if ($this->pedidoCancelado($lease->intento)) {
@@ -226,6 +226,9 @@ class PedidoOcrService
      * - `pendiente` (el job murió antes de reclamar, p. ej. error de
      *   infraestructura) => `cancelado`, también terminal según la máquina U1;
      *   `pendiente -> fallido` no está autorizado por la máquina de estados.
+     * - Con lease todavía vivo al agotarse la cola => cierre terminal con
+     *   `error_code` distintivo (`lease_vivo_al_agotar`) + alerta, jamás
+     *   retorno silencioso que deje el intento en `procesando` para siempre.
      */
     public function marcarFallidoPorAgotamiento(PedidoOcrIntento $intento, ?string $mensaje = null): void
     {
@@ -246,6 +249,29 @@ class PedidoOcrService
             }
 
             if ($actual->lease_token !== null && $actual->lease_expires_at !== null && $actual->lease_expires_at->isFuture()) {
+                Log::warning('pedido_ocr.agotado_con_lease_vivo', [
+                    'intento_id' => $actual->intento_id,
+                    'documento_id' => $actual->documento_id,
+                    'estado' => $estado,
+                ]);
+
+                // FIX-2 (#2430): con lease vivo al agotarse la cola no se
+                // retorna en silencio; se cierra en terminal con código
+                // distintivo para no dejar el intento en `procesando` eterno.
+                $actual->error_code = 'lease_vivo_al_agotar';
+                $actual->error_mensaje = mb_substr($mensaje ?? 'La cola agotó los intentos con un lease todavía vivo; se cierra para no quedar en procesando.', 0, 500);
+                $actual->estado = $estado === OcrIntentoEstado::PROCESANDO
+                    ? OcrIntentoEstado::FALLIDO
+                    : OcrIntentoEstado::CANCELADO;
+                $actual->finished_at = now();
+                $actual->lease_token = null;
+                $actual->lease_expires_at = null;
+                $actual->save();
+
+                if ((string) $actual->estado === OcrIntentoEstado::FALLIDO) {
+                    $this->alertarDesdeIntento($actual, AlertaTipo::OCR_FALLIDO);
+                }
+
                 return;
             }
 
@@ -263,6 +289,26 @@ class PedidoOcrService
                 $this->alertarDesdeIntento($actual, AlertaTipo::OCR_FALLIDO);
             }
         });
+    }
+
+    /**
+     * No-op distinguible: un lease vivo en otro worker se reporta con mensaje
+     * propio ('lease activo') para que el job lo reintente en lugar de
+     * confirmarlo en falso; terminal/vigente sigue siendo no-op silencioso.
+     */
+    private function noOpNoReclamable(int $intentoId): OcrProcesamientoResultado
+    {
+        $actual = PedidoOcrIntento::query()->whereKey($intentoId)->first();
+
+        if ($actual !== null
+            && (string) $actual->estado === OcrIntentoEstado::PROCESANDO
+            && $actual->lease_token !== null
+            && $actual->lease_expires_at !== null
+            && $actual->lease_expires_at->isFuture()) {
+            return OcrProcesamientoResultado::noOp('El intento OCR tiene un lease activo en otro worker; se reintentará al liberarse.');
+        }
+
+        return OcrProcesamientoResultado::noOp('El intento OCR no es reclamable (terminal o vigente).');
     }
 
     /**
