@@ -181,6 +181,8 @@ class PedidoOcrService
             ];
 
             $crudo = $this->proveedor()->extraer($ruta, 'image/jpeg', $contexto);
+            $filasCrudas = array_sum(array_map(static fn ($pagina): int => count((array) ($pagina['rows'] ?? [])), array_filter((array) ($crudo['pages'] ?? []), 'is_array')));
+            Log::info('pedido_ocr.crudo_recibido', ['proveedor' => $contexto['provider'], 'filas' => $filasCrudas, 'hash' => hash('sha256', (string) json_encode($crudo))]);
             $contrato = $this->mapper->mapear($crudo, $contexto);
             $this->validarContrato($contrato);
         } catch (OcrException $exception) {

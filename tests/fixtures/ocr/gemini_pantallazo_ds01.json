@@ -1,0 +1,16 @@
+{
+  "candidates": [
+    {
+      "content": {
+        "parts": [
+          {
+            "text": "{\n  \"filas\": [\n    [\"Proveedores:\", \"Oscar Darío Diaz Casarubias\"],\n    [\"Contacto:\", \"María Gómez 310 555 0132\"],\n    [\"#\", \"Tipo\", \"Producto\", \"Descripción\", \"Bodega\", \"Cant\", \"Valor Unitario\", \"Descuento\", \"Impuesto Cargo\", \"Impuesto Retención\", \"Valor Total\"],\n    [\"1\", \"Producto\", \"TO000057\", \"TORNILLO\\nCORTAMALEZA\", \"Repuestos\", \"4.00\", \"75,000.00\", \"0.00\", \"\", \"\", \"300,000.00\"],\n    [\"\", \"Buscar\", \"\", \"\", \"\", \"\", \"\", \"\", \"\", \"\", \"No puede estar vacío\"]\n  ]\n}"
+          }
+        ],
+        "role": "model"
+      },
+      "finishReason": "STOP",
+      "index": 0
+    }
+  ]
+}

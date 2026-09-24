@@ -28,7 +28,7 @@ final class SiigoScreenshotMapper
     public const MAPPER_VERSION = 'siigo-mapper-1.0.0';
 
     /** @var list<string> */
-    private const ETIQUETAS_SKU = ['buscar', 'codigo', 'cod', 'referencia', 'ref', 'sku', 'item'];
+    private const ETIQUETAS_SKU = ['buscar', 'codigo', 'cod', 'referencia', 'ref', 'sku', 'item', 'producto'];
 
     /** @var list<string> */
     private const ETIQUETAS_DESCRIPCION = ['descripcion', 'detalle', 'nombre'];
@@ -37,7 +37,7 @@ final class SiigoScreenshotMapper
     private const ETIQUETAS_CANTIDAD = ['cant', 'cantidad', 'unidades', 'und', 'un'];
 
     /** @var list<string> */
-    private const ETIQUETAS_PROVEEDOR = ['proveedor', 'senor', 'senores', 'senor(es)', 'senora', 'senoras', 'cliente'];
+    private const ETIQUETAS_PROVEEDOR = ['proveedor', 'proveedores', 'senor', 'senores', 'senor(es)', 'senora', 'senoras', 'cliente'];
 
     /**
      * @param  array<string, mixed>  $crudo  Estructura del proveedor (ver PedidoOcrProvider).
@@ -51,6 +51,7 @@ final class SiigoScreenshotMapper
         $columnas = $deteccion['columnas'] ?? null;
 
         $proveedor = null;
+        $contactoRespaldo = null;
         $lineas = [];
         $ignoradas = [];
         $warnings = [];
@@ -104,19 +105,31 @@ final class SiigoScreenshotMapper
                     continue;
                 }
 
-                if ($this->esFilaTotales($texto)) {
+                // Guarda de contexto de producto (variante DS): una fila de datos
+                // con cantidad mapeada + (sku o descripción) NUNCA se descarta
+                // como totales/empresa/contacto (p. ej. "ACEITE TOTAL 15W40" o
+                // "LIMPIADOR DE CONTACTO" con cantidad son productos, no
+                // etiquetas). Las filas de etiqueta genuinas (sin ese contexto)
+                // siguen filtrándose como antes.
+                $tieneContextoProducto = $this->tieneContextoProducto($celdas, $columnas);
+
+                if (! $tieneContextoProducto && $this->esFilaTotales($texto)) {
                     $ignoradas[] = $this->ignorada($numeroPagina, $numeroFila, 'totales', $texto);
 
                     continue;
                 }
 
-                if ($this->esFilaEmpresa($texto)) {
+                if (! $tieneContextoProducto && $this->esFilaEmpresa($texto)) {
                     $ignoradas[] = $this->ignorada($numeroPagina, $numeroFila, 'encabezado_empresa', $texto);
 
                     continue;
                 }
 
-                if ($this->esFilaContacto($texto)) {
+                if (! $tieneContextoProducto && $this->esFilaContacto($texto)) {
+                    if ($contactoRespaldo === null) {
+                        $contactoRespaldo = $this->extraerContactoPill($celdas);
+                    }
+
                     $ignoradas[] = $this->ignorada($numeroPagina, $numeroFila, 'contacto', $texto);
 
                     continue;
@@ -164,6 +177,18 @@ final class SiigoScreenshotMapper
                     $cantidad,
                 );
             }
+        }
+
+        // Respaldo DS: la pastilla "Contacto:" solo aporta el nombre del
+        // proveedor cuando no existe ninguna fila "Proveedores:". Nunca se
+        // promueve una fila de contacto a etiqueta proveedora (riesgo de
+        // capturar direcciones o datos de contacto como proveedor).
+        if ($proveedor === null && ($contactoRespaldo['valor'] ?? null) !== null) {
+            $proveedor = [
+                'raw' => $contactoRespaldo['valor'],
+                'value' => $contactoRespaldo['valor'],
+                'confidence' => $contactoRespaldo['confidence'],
+            ];
         }
 
         if ($proveedor === null) {
@@ -381,6 +406,11 @@ final class SiigoScreenshotMapper
     /**
      * @param  array<int, array<string, mixed>>  $celdas
      * @return array{sku: int, descripcion: int, cantidad: int}|null
+     *
+     * La etiqueta `producto` (columna SKU de la variante DS) solo elige
+     * columna cuando el trío completo resuelve en LA MISMA fila: una celda
+     * de datos con el texto "producto" (columna Tipo) jamás basta por sí
+     * sola para declarar una cabecera.
      */
     private function columnasDeCabecera(array $celdas): ?array
     {
@@ -444,6 +474,79 @@ final class SiigoScreenshotMapper
             $etiqueta = $this->etiquetaNormalizada($partes[0] ?? '');
 
             if (! in_array($etiqueta, self::ETIQUETAS_PROVEEDOR, true)) {
+                continue;
+            }
+
+            $resto = trim($partes[1] ?? '');
+
+            if ($resto !== '') {
+                return ['valor' => $resto, 'confidence' => $celda['confidence'] ?? null];
+            }
+
+            foreach ($celdas as $otraColumna => $otraCelda) {
+                if ((int) $otraColumna <= (int) $columna) {
+                    continue;
+                }
+
+                $otro = trim((string) ($otraCelda['text'] ?? ''));
+
+                if ($otro !== '') {
+                    return ['valor' => $otro, 'confidence' => $otraCelda['confidence'] ?? null];
+                }
+            }
+
+            return ['valor' => null, 'confidence' => null];
+        }
+
+        return null;
+    }
+
+    /**
+     * Contexto de producto para la guarda DS: la fila trae cantidad mapeada
+     * no vacía MÁS sku o descripción no vacíos en sus columnas mapeadas.
+     *
+     * @param  array<int, array<string, mixed>>  $celdas
+     * @param  array{sku: int, descripcion: int, cantidad: int}|null  $columnas
+     */
+    private function tieneContextoProducto(array $celdas, ?array $columnas): bool
+    {
+        if ($columnas === null) {
+            return false;
+        }
+
+        $celdaCantidad = $celdas[$columnas['cantidad']] ?? null;
+        $cantidad = trim((string) (($celdaCantidad['text'] ?? '')));
+
+        if ($cantidad === '') {
+            return false;
+        }
+
+        $celdaSku = $celdas[$columnas['sku']] ?? null;
+        $celdaDescripcion = $celdas[$columnas['descripcion']] ?? null;
+
+        return trim((string) (($celdaSku['text'] ?? ''))) !== ''
+            || trim((string) (($celdaDescripcion['text'] ?? ''))) !== '';
+    }
+
+    /**
+     * Extrae el valor de una pastilla exacta "Contacto: ..." SIN promover la
+     * fila a proveedora: solo sirve como respaldo cuando no hay "Proveedores:".
+     *
+     * @param  array<int, array<string, mixed>>  $celdas
+     * @return array{valor: string|null, confidence: float|null}|null
+     */
+    private function extraerContactoPill(array $celdas): ?array
+    {
+        foreach ($celdas as $columna => $celda) {
+            $texto = trim((string) ($celda['text'] ?? ''));
+
+            if ($texto === '') {
+                continue;
+            }
+
+            $partes = explode(':', $texto, 2);
+
+            if ($this->etiquetaNormalizada($partes[0] ?? '') !== 'contacto') {
                 continue;
             }
 
