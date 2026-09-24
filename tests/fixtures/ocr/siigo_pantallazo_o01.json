@@ -1,0 +1,86 @@
+{
+    "provider": "fake",
+    "provider_version": "fake-1.0.0",
+    "full_text": "SEMANUR S.A.S.\nNIT 900.123.456-7\nSeñor(es): OSCAR DARÍO DÍAZ CASARUBIAS\nDirección: CALLE 10 # 20-30\nBUSCAR DESCRIPCIÓN BODEGA CANT VALOR UNIT. VALOR TOTAL\nTO000057 TORNILLO CORTAMALEZA Repuestos 4.00 75,000.00 300,000.00\n1.00\nSUBTOTAL 300,000.00\nGuardar Cancelar",
+    "pages": [
+        {
+            "page_number": 1,
+            "width": 1240,
+            "height": 2200,
+            "rows": [
+                {
+                    "row": 1,
+                    "cells": [
+                        {"column": 1, "text": "SEMANUR S.A.S.", "confidence": 0.99, "bounding_box": {"x": 40, "y": 30, "width": 260, "height": 28}},
+                        {"column": 2, "text": "NIT 900.123.456-7", "confidence": 0.98, "bounding_box": {"x": 320, "y": 30, "width": 240, "height": 26}}
+                    ]
+                },
+                {
+                    "row": 2,
+                    "cells": [
+                        {"column": 1, "text": "Señor(es):", "confidence": 0.97, "bounding_box": {"x": 40, "y": 90, "width": 120, "height": 24}},
+                        {"column": 2, "text": "OSCAR DARÍO DÍAZ CASARUBIAS", "confidence": 0.96, "bounding_box": {"x": 180, "y": 90, "width": 420, "height": 24}}
+                    ]
+                },
+                {
+                    "row": 3,
+                    "cells": [
+                        {"column": 1, "text": "Dirección:", "confidence": 0.95, "bounding_box": {"x": 40, "y": 124, "width": 100, "height": 22}},
+                        {"column": 2, "text": "CALLE 10 # 20-30", "confidence": 0.94, "bounding_box": {"x": 160, "y": 124, "width": 300, "height": 22}}
+                    ]
+                },
+                {
+                    "row": 4,
+                    "cells": [
+                        {"column": 1, "text": "BUSCAR", "confidence": 0.95, "bounding_box": {"x": 40, "y": 200, "width": 90, "height": 24}},
+                        {"column": 2, "text": "DESCRIPCIÓN", "confidence": 0.95, "bounding_box": {"x": 150, "y": 200, "width": 220, "height": 24}},
+                        {"column": 3, "text": "BODEGA", "confidence": 0.93, "bounding_box": {"x": 390, "y": 200, "width": 120, "height": 24}},
+                        {"column": 4, "text": "CANT", "confidence": 0.94, "bounding_box": {"x": 530, "y": 200, "width": 70, "height": 24}},
+                        {"column": 5, "text": "VALOR UNIT.", "confidence": 0.92, "bounding_box": {"x": 620, "y": 200, "width": 140, "height": 24}},
+                        {"column": 6, "text": "VALOR TOTAL", "confidence": 0.92, "bounding_box": {"x": 780, "y": 200, "width": 150, "height": 24}}
+                    ]
+                },
+                {
+                    "row": 5,
+                    "cells": [
+                        {"column": 1, "text": "TO000057", "confidence": 0.93, "bounding_box": {"x": 40, "y": 240, "width": 120, "height": 26}},
+                        {"column": 2, "text": "TORNILLO\nCORTAMALEZA", "confidence": 0.92, "bounding_box": {"x": 180, "y": 236, "width": 240, "height": 40}},
+                        {"column": 3, "text": "Repuestos", "confidence": 0.9, "bounding_box": {"x": 440, "y": 240, "width": 120, "height": 26}},
+                        {"column": 4, "text": "4.00", "confidence": 0.94, "bounding_box": {"x": 580, "y": 240, "width": 60, "height": 26}},
+                        {"column": 5, "text": "75,000.00", "confidence": 0.91, "bounding_box": {"x": 660, "y": 240, "width": 120, "height": 26}},
+                        {"column": 6, "text": "300,000.00", "confidence": 0.91, "bounding_box": {"x": 800, "y": 240, "width": 130, "height": 26}}
+                    ]
+                },
+                {
+                    "row": 6,
+                    "cells": [
+                        {"column": 1, "text": "", "confidence": null, "bounding_box": {"x": 40, "y": 286, "width": 120, "height": 26}},
+                        {"column": 2, "text": "", "confidence": null, "bounding_box": {"x": 180, "y": 286, "width": 240, "height": 26}},
+                        {"column": 3, "text": "", "confidence": null, "bounding_box": {"x": 440, "y": 286, "width": 120, "height": 26}},
+                        {"column": 4, "text": "1.00", "confidence": 0.9, "bounding_box": {"x": 580, "y": 286, "width": 60, "height": 26}},
+                        {"column": 5, "text": "", "confidence": null, "bounding_box": {"x": 660, "y": 286, "width": 120, "height": 26}},
+                        {"column": 6, "text": "", "confidence": null, "bounding_box": {"x": 800, "y": 286, "width": 130, "height": 26}}
+                    ]
+                },
+                {
+                    "row": 7,
+                    "cells": [
+                        {"column": 1, "text": "", "confidence": null, "bounding_box": {"x": 40, "y": 340, "width": 90, "height": 24}},
+                        {"column": 2, "text": "SUBTOTAL", "confidence": 0.93, "bounding_box": {"x": 180, "y": 340, "width": 140, "height": 24}},
+                        {"column": 3, "text": "", "confidence": null, "bounding_box": {"x": 440, "y": 340, "width": 120, "height": 24}},
+                        {"column": 4, "text": "", "confidence": null, "bounding_box": {"x": 580, "y": 340, "width": 60, "height": 24}},
+                        {"column": 5, "text": "", "confidence": null, "bounding_box": {"x": 660, "y": 340, "width": 120, "height": 24}},
+                        {"column": 6, "text": "300,000.00", "confidence": 0.9, "bounding_box": {"x": 800, "y": 340, "width": 130, "height": 24}}
+                    ]
+                },
+                {
+                    "row": 8,
+                    "cells": [
+                        {"column": 1, "text": "Guardar", "confidence": 0.92, "bounding_box": {"x": 40, "y": 400, "width": 110, "height": 28}},
+                        {"column": 2, "text": "Cancelar", "confidence": 0.92, "bounding_box": {"x": 170, "y": 400, "width": 110, "height": 28}}
+                    ]
+                }
+            ]
+        }
+    ]
+}

@@ -4,19 +4,20 @@ namespace App\Filament\Resources;
 
 use App\Filament\Resources\CategoriaResource\Pages;
 use App\Models\Categoria;
+use BackedEnum;
+use Filament\Actions;
 use Filament\Forms;
 use Filament\Resources\Resource;
+use Filament\Schemas\Schema;
 use Filament\Tables;
 use Filament\Tables\Table;
-use Filament\Actions;
-use Filament\Schemas\Schema;
-use BackedEnum;
+use Illuminate\Database\Eloquent\Model;
 
 class CategoriaResource extends Resource
 {
     protected static ?string $model = Categoria::class;
 
-    protected static string | BackedEnum | null $navigationIcon = 'heroicon-o-rectangle-stack';
+    protected static string|BackedEnum|null $navigationIcon = 'heroicon-o-rectangle-stack';
 
     public static function form(Schema $schema): Schema
     {
@@ -50,12 +51,6 @@ class CategoriaResource extends Resource
             ])
             ->recordActions([
                 Actions\EditAction::make(),
-                Actions\DeleteAction::make(),
-            ])
-            ->toolbarActions([
-                Actions\BulkActionGroup::make([
-                    Actions\DeleteBulkAction::make(),
-                ]),
             ]);
     }
 
@@ -73,5 +68,15 @@ class CategoriaResource extends Resource
             'create' => Pages\CreateCategoria::route('/create'),
             'edit' => Pages\EditCategoria::route('/{record}/edit'),
         ];
+    }
+
+    public static function canDelete(Model $record): bool
+    {
+        return false;
+    }
+
+    public static function canDeleteAny(): bool
+    {
+        return false;
     }
 }

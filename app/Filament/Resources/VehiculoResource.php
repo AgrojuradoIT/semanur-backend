@@ -3,24 +3,27 @@
 namespace App\Filament\Resources;
 
 use App\Filament\Resources\VehiculoResource\Pages;
+use App\Filament\Resources\VehiculoResource\RelationManagers\DocumentosRelationManager;
 use App\Models\Vehiculo;
+use BackedEnum;
+use Filament\Actions;
 use Filament\Forms;
+use Filament\Forms\Components\FileUpload;
 use Filament\Resources\Resource;
+use Filament\Schemas\Schema;
 use Filament\Tables;
 use Filament\Tables\Table;
-use Filament\Actions;
-use Filament\Schemas\Schema;
-use BackedEnum;
-
-use Filament\Forms\Components\FileUpload;
 use Illuminate\Support\Facades\Storage;
-use App\Filament\Resources\VehiculoResource\RelationManagers\DocumentosRelationManager;
+use Illuminate\Support\Str;
+use Intervention\Image\Drivers\Gd\Driver;
+use Intervention\Image\Format;
+use Intervention\Image\ImageManager;
 
 class VehiculoResource extends Resource
 {
     protected static ?string $model = Vehiculo::class;
 
-    protected static string | BackedEnum | null $navigationIcon = 'heroicon-o-truck';
+    protected static string|BackedEnum|null $navigationIcon = 'heroicon-o-truck';
 
     public static function form(Schema $schema): Schema
     {
@@ -42,47 +45,54 @@ class VehiculoResource extends Resource
                     ->label('Foto del vehículo')
                     ->image()
                     ->disk('public')
-                    ->directory('vehiculos')
                     ->maxSize(5120)
                     ->acceptedFileTypes(['image/jpeg', 'image/png', 'image/webp', 'image/gif'])
                     ->saveUploadedFileUsing(function ($file, $record) {
-                        $uuid = \Illuminate\Support\Str::uuid()->toString();
-                        
-                        $manager = \Intervention\Image\ImageManager::usingDriver(
-                            \Intervention\Image\Drivers\Gd\Driver::class
+                        $uuid = Str::uuid()->toString();
+
+                        $manager = ImageManager::usingDriver(
+                            Driver::class
                         );
-                        
+
                         $tempPath = $file->getRealPath();
-                        
+
                         // Imagen principal (max 1200px, WebP 80%)
                         $mainImg = $manager->decodePath($tempPath);
                         $mainImg->scale(width: 1200);
-                        $mainEncoded = $mainImg->encodeUsingFormat(\Intervention\Image\Format::WEBP, quality: 80);
+                        $mainEncoded = $mainImg->encodeUsingFormat(Format::WEBP, quality: 80);
                         $mainPath = "vehiculos/{$uuid}.webp";
                         Storage::disk('public')->put($mainPath, $mainEncoded->toString());
-                        
+
                         // Thumbnail (200x200, WebP 80%)
                         $thumbImg = $manager->decodePath($tempPath);
                         $thumbImg->cover(width: 200, height: 200);
-                        $thumbEncoded = $thumbImg->encodeUsingFormat(\Intervention\Image\Format::WEBP, quality: 80);
+                        $thumbEncoded = $thumbImg->encodeUsingFormat(Format::WEBP, quality: 80);
                         $thumbPath = "vehiculos/thumbs/{$uuid}.webp";
                         Storage::disk('public')->put($thumbPath, $thumbEncoded->toString());
-                        
+
                         if ($record) {
                             $old = $record->imagen_url;
                             $oldThumb = $record->imagen_thumb_url;
                             $record->imagen_thumb_url = $thumbPath;
                             $record->save();
-                            if ($old) Storage::disk('public')->delete($old);
-                            if ($oldThumb) Storage::disk('public')->delete($oldThumb);
+                            if ($old) {
+                                Storage::disk('public')->delete($old);
+                            }
+                            if ($oldThumb) {
+                                Storage::disk('public')->delete($oldThumb);
+                            }
                         }
-                        
+
                         return $mainPath;
                     })
                     ->deleteUploadedFileUsing(function ($record) {
                         if ($record) {
-                            if ($record->imagen_url) Storage::disk('public')->delete($record->imagen_url);
-                            if ($record->imagen_thumb_url) Storage::disk('public')->delete($record->imagen_thumb_url);
+                            if ($record->imagen_url) {
+                                Storage::disk('public')->delete($record->imagen_url);
+                            }
+                            if ($record->imagen_thumb_url) {
+                                Storage::disk('public')->delete($record->imagen_thumb_url);
+                            }
                         }
                     })
                     ->columnSpanFull(),
@@ -111,7 +121,20 @@ class VehiculoResource extends Resource
                     ->label('Foto')
                     ->circular()
                     ->size(40)
-                    ->disk('public'),
+                    ->disk('public')
+                    ->getStateUsing(function ($record) {
+                        if (! $record || ! $record->imagen_url) {
+                            return null;
+                        }
+                        if (str_starts_with($record->imagen_url, 'http')) {
+                            return $record->imagen_url;
+                        }
+                        if (! str_contains($record->imagen_url, '/')) {
+                            return 'vehiculos/'.$record->imagen_url;
+                        }
+
+                        return $record->imagen_url;
+                    }),
                 Tables\Columns\TextColumn::make('placa')
                     ->searchable(),
                 Tables\Columns\TextColumn::make('tipo')

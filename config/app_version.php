@@ -25,4 +25,11 @@ return [
 
     // Si es true, el usuario no puede saltar la actualización
     'force_update' => env('APP_VERSION_FORCE_UPDATE', false),
+
+    'apk_sha256' => env('APP_VERSION_APK_SHA256'),
+    'apk_size_bytes' => env('APP_VERSION_APK_SIZE_BYTES') !== null
+        ? (int) env('APP_VERSION_APK_SIZE_BYTES')
+        : null,
+    'package_name' => env('APP_VERSION_PACKAGE_NAME', 'com.semanur.hub'),
+    'signer_sha256' => env('APP_VERSION_SIGNER_SHA256'),
 ];

@@ -11,9 +11,11 @@ return new class extends Migration
      */
     public function up(): void
     {
-        Schema::table('media', function (Blueprint $table) {
-            $table->text('notas')->nullable()->after('path');
-        });
+        if (! Schema::hasColumn('media', 'notas')) {
+            Schema::table('media', function (Blueprint $table) {
+                $table->text('notas')->nullable()->after('path');
+            });
+        }
     }
 
     /**
@@ -21,8 +23,8 @@ return new class extends Migration
      */
     public function down(): void
     {
-        Schema::table('media', function (Blueprint $table) {
-            $table->dropColumn('notas');
-        });
+        throw new RuntimeException(
+            'Forward-only migration: media audit notes must be retained. Restore a verified backup for rollback.',
+        );
     }
 };

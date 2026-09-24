@@ -2,6 +2,7 @@
 
 namespace Tests\Feature\Api;
 
+use App\Models\Bodega;
 use App\Models\Categoria;
 use App\Models\Empleado;
 use App\Models\OrdenTrabajo;
@@ -32,8 +33,11 @@ class DashboardAnalyticsTest extends TestCase
     use RefreshDatabase;
 
     private const OT_ESTADOS = ['Abierta', 'En Progreso', 'Pendiente Auditoria', 'Aprobada', 'Cerrada'];
+
     private const OT_PRIORIDADES = ['Alta', 'Media', 'Baja'];
+
     private const OPEN_OT_ESTADOS = ['Abierta', 'En Progreso'];
+
     private int $otVehicleSequence = 0;
 
     protected function tearDown(): void
@@ -171,7 +175,7 @@ class DashboardAnalyticsTest extends TestCase
     private function vehiculoForOt(): Vehiculo
     {
         return Vehiculo::create([
-            'placa' => 'TES' . str_pad((string) ++$this->otVehicleSequence, 3, '0', STR_PAD_LEFT),
+            'placa' => 'TES'.str_pad((string) ++$this->otVehicleSequence, 3, '0', STR_PAD_LEFT),
             'tipo' => 'Camion',
             'categoria' => 'Carga',
             'tipo_combustible' => 'Diesel',
@@ -194,6 +198,7 @@ class DashboardAnalyticsTest extends TestCase
                 'apellidos' => 'Mecanico',
             ]
         );
+
         return $empleado->id;
     }
 
@@ -336,7 +341,7 @@ class DashboardAnalyticsTest extends TestCase
     private function makePreopVehicle(string $suffix): Vehiculo
     {
         return Vehiculo::create([
-            'placa' => 'PRE' . $suffix,
+            'placa' => 'PRE'.$suffix,
             'tipo' => 'Camion',
             'categoria' => 'Carga',
             'tipo_combustible' => 'Diesel',
@@ -932,7 +937,7 @@ class DashboardAnalyticsTest extends TestCase
 
     private function makeRecentActivityProduct(): Producto
     {
-        return $this->lowStockProduct('ACTIVITY', 10, 1);
+        return $this->lowStockProduct('ACTIVITY', 100, 1);
     }
 
     private function setCreatedAt(object $model, Carbon $at): void
@@ -946,6 +951,14 @@ class DashboardAnalyticsTest extends TestCase
         $user = $this->userWithAnalitica();
         Sanctum::actingAs($user);
         $producto = $this->makeRecentActivityProduct();
+        $bodega = Bodega::create(['nombre' => 'Bodega actividad', 'tipo' => 'estandar']);
+        DB::table('bodega_producto')->insert([
+            'bodega_id' => $bodega->bodega_id,
+            'producto_id' => $producto->producto_id,
+            'cantidad' => 100,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
         $vehiculo = $this->vehiculoForOt();
         $events = [];
 
@@ -960,6 +973,7 @@ class DashboardAnalyticsTest extends TestCase
 
             $movimiento = TransaccionInventario::create([
                 'producto_id' => $producto->producto_id,
+                'bodega_id' => $bodega->bodega_id,
                 'usuario_id' => $user->id,
                 'transaccion_tipo' => 'salida',
                 'transaccion_cantidad' => $index,

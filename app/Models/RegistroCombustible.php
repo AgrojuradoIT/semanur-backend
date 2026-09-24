@@ -7,6 +7,7 @@ use Illuminate\Database\Eloquent\Model;
 class RegistroCombustible extends Model
 {
     protected $table = 'registros_combustible';
+
     protected $primaryKey = 'registro_id';
 
     protected $fillable = [
@@ -26,6 +27,8 @@ class RegistroCombustible extends Model
         'notas',
         'labor',
         'transaccion_id',
+        'client_operation_id',
+        'client_operation_hash',
     ];
 
     protected $casts = [

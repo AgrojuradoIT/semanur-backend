@@ -3,7 +3,6 @@
 namespace App\Filament\Resources\CategoriaResource\Pages;
 
 use App\Filament\Resources\CategoriaResource;
-use Filament\Actions;
 use Filament\Resources\Pages\EditRecord;
 
 class EditCategoria extends EditRecord
@@ -12,8 +11,6 @@ class EditCategoria extends EditRecord
 
     protected function getHeaderActions(): array
     {
-        return [
-            Actions\DeleteAction::make(),
-        ];
+        return [];
     }
 }

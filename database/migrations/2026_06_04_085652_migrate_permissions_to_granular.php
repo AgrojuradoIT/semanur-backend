@@ -1,8 +1,7 @@
 <?php
 
 use Illuminate\Database\Migrations\Migration;
-use Illuminate\Database\Schema\Blueprint;
-use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Facades\Cache;
 
 return new class extends Migration
 {
@@ -49,38 +48,13 @@ return new class extends Migration
         }
 
         // Limpiar cache de roles
-        \Illuminate\Support\Facades\Cache::flush();
+        Cache::flush();
     }
 
     public function down(): void
     {
-        // Convertir de vuelta a "legacy"
-        $roles = DB::table('role_permisos')->get();
-        foreach ($roles as $role) {
-            $permisos = json_decode($role->permisos, true) ?? [];
-            $newPermisos = [];
-            foreach ($permisos as $p) {
-                $base = explode('.', $p)[0];
-                $newPermisos[] = $base;
-            }
-            DB::table('role_permisos')
-                ->where('id', $role->id)
-                ->update(['permisos' => json_encode(array_values(array_unique($newPermisos)))]);
-        }
-
-        $users = DB::table('users')->whereNotNull('permisos')->get();
-        foreach ($users as $user) {
-            $permisos = json_decode($user->permisos, true) ?? [];
-            $newPermisos = [];
-            foreach ($permisos as $p) {
-                $base = explode('.', $p)[0];
-                $newPermisos[] = $base;
-            }
-            DB::table('users')
-                ->where('id', $user->id)
-                ->update(['permisos' => json_encode(array_values(array_unique($newPermisos)))]);
-        }
-
-        \Illuminate\Support\Facades\Cache::flush();
+        throw new RuntimeException(
+            'Forward-only migration: granular permissions must not be rewritten automatically. Restore a verified backup for rollback.',
+        );
     }
 };

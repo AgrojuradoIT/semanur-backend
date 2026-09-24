@@ -3,22 +3,32 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
-use App\Models\Bodega;
+use App\Http\Requests\StoreOrdenTrabajoRequest;
 use App\Models\Empleado;
 use App\Models\OrdenTrabajo;
 use App\Models\PrestamoHerramienta;
 use App\Models\Producto;
 use App\Models\TransaccionInventario;
 use App\Models\User;
+use App\Services\Inventory\InventoryWarehouseResolver;
 use App\Services\MediaService;
-use Carbon\Carbon;
+use App\Services\NotificacionService;
+use App\Support\ClientOperationHasher;
+use Illuminate\Database\QueryException;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
-use App\Services\NotificacionService;
+use Throwable;
 
 class OrdenTrabajoApiController extends Controller
 {
+    public function __construct(
+        private readonly InventoryWarehouseResolver $warehouseResolver,
+    ) {}
+
     private function getEmpleadoIdForUser(int $userId): ?int
     {
         return Empleado::where('user_id', $userId)->value('id');
@@ -46,7 +56,7 @@ class OrdenTrabajoApiController extends Controller
         $user = $request->user();
         $query = OrdenTrabajo::with(['vehiculo', 'mecanico', 'movimientos_inventario.producto', 'sesiones', 'evidencias']);
 
-        if (!$user->isAdmin() && !$user->isJefeDeTaller() && !$user->isAuxiliarBodega()) {
+        if (! $user->isAdmin() && ! $user->isJefeDeTaller() && ! $user->isAuxiliarBodega()) {
             $ids = [(int) $user->id];
             $empleadoId = $this->getEmpleadoIdForUser((int) $user->id);
             if ($empleadoId !== null) {
@@ -68,67 +78,89 @@ class OrdenTrabajoApiController extends Controller
             'movimientos_inventario.producto',
             'sesiones.user',
             'sesiones.empleado',
-            'evidencias'
+            'evidencias',
         ])->find($id);
 
-        if (!$orden) {
+        if (! $orden) {
             return response()->json(['message' => 'Orden de trabajo no encontrada'], 404);
         }
 
-        if (!$this->canAccessOrden($user, $orden)) {
+        if (! $this->canAccessOrden($user, $orden)) {
             return response()->json(['message' => 'No autorizado para ver esta orden'], 403);
         }
 
         return response()->json($orden);
     }
 
-    public function store(Request $request, MediaService $mediaService)
+    public function store(StoreOrdenTrabajoRequest $request, MediaService $mediaService): JsonResponse
     {
-        $request->validate([
-            'vehiculo_id' => 'required|exists:vehiculos,vehiculo_id',
-            'mecanico_asignado_id' => 'nullable|integer',
-            'prioridad' => 'required|in:Alta,Media,Baja',
-            'descripcion' => 'required|string',
-            'repuestos' => 'nullable|array',
-            'repuestos.*.producto_id' => 'required_with:repuestos|exists:productos,producto_id',
-            'repuestos.*.cantidad' => 'required_with:repuestos|numeric|min:1',
-            'herramientas' => 'nullable|array',
-            'herramientas.*.producto_id' => 'required_with:herramientas|exists:productos,producto_id',
-            'herramientas.*.cantidad' => 'nullable|numeric|min:1',
-            'foto_evidencia' => 'nullable|image|max:5120',
-        ]);
+        $validated = $request->validated();
+        $actorId = (int) $request->user()->id;
+        $operationId = $validated['client_operation_id'] ?? null;
 
         try {
-            DB::beginTransaction();
-// Resuelve mecanico: el frontend puede enviar empleado_id o user_id
-            // Fase 1: mecanicos no tienen usuario → se guarda null
-            // Fase 2: cuando tengan cuenta → se usa su user_id automáticamente
-            $mecanicoAsignadoId = null;
-            if ($request->mecanico_asignado_id) {
-                $inputId = (int) $request->mecanico_asignado_id;
-                $empleado = Empleado::find($inputId);
-                if ($empleado) {
-                    $mecanicoAsignadoId = $empleado->id;
+            $warehouse = $this->warehouseResolver->resolve(
+                isset($validated['bodega_id']) ? (int) $validated['bodega_id'] : null,
+            );
+            $operationHash = $operationId === null
+                ? null
+                : ClientOperationHasher::hash($this->workOrderOperationPayload(
+                    $validated,
+                    $warehouse->bodega_id,
+                ));
+
+            if ($operationId !== null) {
+                $existing = $this->findWorkOrderOperation($actorId, $operationId);
+                if ($existing !== null) {
+                    return $this->workOrderReplayResponse($existing, $operationHash);
                 }
+            } else {
+                Log::notice('Work-order write received without client_operation_id during compatibility rollout.', [
+                    'actor_id' => $actorId,
+                ]);
             }
 
-            $orden = new OrdenTrabajo();
-            $orden->vehiculo_id = $request->vehiculo_id;
-            $orden->mecanico_asignado_id = $mecanicoAsignadoId;
-            $orden->prioridad = $request->prioridad;
-            $orden->descripcion = $request->descripcion;
-            $orden->estado = 'Abierta';
-            $orden->fecha_inicio = now();
-            $orden->save();
+            $orden = DB::transaction(function () use (
+                $request,
+                $validated,
+                $actorId,
+                $operationId,
+                $operationHash,
+                $warehouse,
+                $mediaService,
+            ): OrdenTrabajo {
+                if ($operationId !== null) {
+                    $existing = $this->findWorkOrderOperation($actorId, $operationId, true);
+                    if ($existing !== null) {
+                        if (! hash_equals((string) $existing->client_operation_hash, (string) $operationHash)) {
+                            throw ValidationException::withMessages([
+                                'client_operation_id' => 'La clave ya fue usada con una orden diferente.',
+                            ]);
+                        }
 
-            $bodegaId = $this->resolveDefaultBodegaId();
+                        return $existing;
+                    }
+                }
 
-            if ($request->has('repuestos')) {
-                foreach ($request->repuestos as $repuesto) {
+                $orden = OrdenTrabajo::create([
+                    'created_by_user_id' => $actorId,
+                    'client_operation_id' => $operationId,
+                    'client_operation_hash' => $operationHash,
+                    'vehiculo_id' => (int) $validated['vehiculo_id'],
+                    'mecanico_asignado_id' => isset($validated['mecanico_asignado_id'])
+                        ? (int) $validated['mecanico_asignado_id']
+                        : null,
+                    'prioridad' => $validated['prioridad'],
+                    'descripcion' => $validated['descripcion'],
+                    'estado' => 'Abierta',
+                    'fecha_inicio' => now(),
+                ]);
+
+                foreach ($validated['repuestos'] ?? [] as $repuesto) {
                     $cantidad = (float) $repuesto['cantidad'];
                     $producto = Producto::lockForUpdate()->find($repuesto['producto_id']);
 
-                    if (!$producto || $producto->producto_stock_actual < $cantidad) {
+                    if (! $producto || $producto->producto_stock_actual < $cantidad) {
                         throw ValidationException::withMessages([
                             'repuestos' => ["Stock insuficiente para el producto ID {$repuesto['producto_id']}"],
                         ]);
@@ -136,8 +168,8 @@ class OrdenTrabajoApiController extends Controller
 
                     TransaccionInventario::create([
                         'producto_id' => $repuesto['producto_id'],
-                        'bodega_id' => $bodegaId,
-                        'usuario_id' => $request->user()->id,
+                        'bodega_id' => $warehouse->bodega_id,
+                        'usuario_id' => $actorId,
                         'transaccion_tipo' => 'salida',
                         'transaccion_cantidad' => $cantidad,
                         'transaccion_motivo' => 'Repuesto para Orden de Trabajo',
@@ -146,24 +178,29 @@ class OrdenTrabajoApiController extends Controller
                         'transaccion_notas' => "Repuesto para OT #{$orden->orden_trabajo_id}",
                     ]);
                 }
-            }
 
-            if ($request->has('herramientas')) {
-                foreach ($request->herramientas as $tool) {
+                foreach ($validated['herramientas'] ?? [] as $tool) {
                     $cantidad = isset($tool['cantidad']) ? (float) $tool['cantidad'] : 1.0;
                     $producto = Producto::lockForUpdate()->find($tool['producto_id']);
-                    $mecanicoPrestamoId = $orden->mecanico_asignado_id ?: $this->getEmpleadoIdForUser((int) $request->user()->id);
+                    $mecanicoPrestamoId = $orden->mecanico_asignado_id
+                        ?: $this->getEmpleadoIdForUser($actorId);
 
-                    if (!$producto || $producto->producto_stock_actual < $cantidad) {
+                    if (! $producto || $producto->producto_stock_actual < $cantidad) {
                         throw ValidationException::withMessages([
                             'herramientas' => ["Stock insuficiente para herramienta ID {$tool['producto_id']}"],
+                        ]);
+                    }
+
+                    if ($mecanicoPrestamoId === null) {
+                        throw ValidationException::withMessages([
+                            'mecanico_asignado_id' => 'Debe asignar un empleado para prestar herramientas.',
                         ]);
                     }
 
                     $prestamo = PrestamoHerramienta::create([
                         'producto_id' => $tool['producto_id'],
                         'mecanico_id' => $mecanicoPrestamoId,
-                        'admin_id' => $request->user()->id,
+                        'admin_id' => $actorId,
                         'prestamo_cantidad' => $cantidad,
                         'fecha_prestamo' => now(),
                         'estado' => 'prestado',
@@ -172,8 +209,8 @@ class OrdenTrabajoApiController extends Controller
 
                     TransaccionInventario::create([
                         'producto_id' => $tool['producto_id'],
-                        'bodega_id' => $bodegaId,
-                        'usuario_id' => $request->user()->id,
+                        'bodega_id' => $warehouse->bodega_id,
+                        'usuario_id' => $actorId,
                         'transaccion_tipo' => 'salida',
                         'transaccion_cantidad' => $cantidad,
                         'transaccion_motivo' => 'Prestamo de herramienta para OT',
@@ -182,39 +219,63 @@ class OrdenTrabajoApiController extends Controller
                         'transaccion_notas' => "Prestamo #{$prestamo->prestamo_id} asociado a OT #{$orden->orden_trabajo_id}",
                     ]);
                 }
+
+                if ($request->hasFile('foto_evidencia')) {
+                    $media = $mediaService->storeUploadedFile(
+                        $request->file('foto_evidencia'),
+                        module: 'taller',
+                        entityType: 'orden_trabajo',
+                        entityId: $orden->orden_trabajo_id,
+                        userId: $actorId,
+                        notas: $validated['notas_foto_evidencia'] ?? null,
+                    );
+
+                    $orden->update(['foto_evidencia' => $media->path]);
+                }
+
+                return $orden;
+            });
+
+            $idempotentReplay = $operationId !== null && ! $orden->wasRecentlyCreated;
+            if (! $idempotentReplay) {
+                try {
+                    NotificacionService::ordenCreada($orden);
+                } catch (Throwable $notificationError) {
+                    Log::warning('Work-order notification failed after a successful commit.', [
+                        'orden_trabajo_id' => $orden->orden_trabajo_id,
+                        'exception' => $notificationError,
+                    ]);
+                }
             }
 
-            if ($request->hasFile('foto_evidencia')) {
-                $media = $mediaService->storeUploadedFile(
-                    $request->file('foto_evidencia'),
-                    module: 'taller',
-                    entityType: 'orden_trabajo',
-                    entityId: $orden->orden_trabajo_id,
-                    userId: $request->user()->id,
-                    notas: $request->input('notas_foto_evidencia')
-                );
-
-                $orden->foto_evidencia = $media->path;
-                $orden->save();
+            return response()->json([
+                'message' => $idempotentReplay
+                    ? 'La orden ya había sido registrada.'
+                    : 'Orden de trabajo creada correctamente con items asociados',
+                'orden' => $orden->load(['vehiculo', 'movimientos_inventario.producto']),
+                'idempotent_replay' => $idempotentReplay,
+                'idempotency_protected' => $operationId !== null,
+            ], $idempotentReplay ? 200 : 201);
+        } catch (ValidationException $exception) {
+            if ($operationId !== null && isset($operationHash)) {
+                $existing = $this->findWorkOrderOperation($actorId, $operationId);
+                if ($existing !== null) {
+                    return $this->workOrderReplayResponse($existing, $operationHash);
+                }
             }
 
-            DB::commit();
+            throw $exception;
+        } catch (QueryException $exception) {
+            if ($operationId !== null && isset($operationHash)) {
+                $existing = $this->findWorkOrderOperation($actorId, $operationId);
+                if ($existing !== null) {
+                    return $this->workOrderReplayResponse($existing, $operationHash);
+                }
+            }
 
-            NotificacionService::ordenCreada($orden);
-
-            return response()->json([
-                'message' => 'Orden de trabajo creada correctamente con items asociados',
-                'orden' => $orden->load(['vehiculo', 'movimientos_inventario.producto'])
-            ], 201);
-        } catch (ValidationException $e) {
-            DB::rollBack();
-            return response()->json([
-                'message' => 'Error de validacion al crear la orden',
-                'errors' => $e->errors(),
-            ], 422);
-        } catch (\Exception $e) {
-            DB::rollBack();
-            return response()->json(['message' => 'Error al crear la orden: ' . $e->getMessage()], 500);
+            return $this->workOrderServerError($exception, $actorId, $operationId);
+        } catch (Throwable $exception) {
+            return $this->workOrderServerError($exception, $actorId, $operationId);
         }
     }
 
@@ -228,19 +289,19 @@ class OrdenTrabajoApiController extends Controller
         $user = $request->user();
         $orden = OrdenTrabajo::find($id);
 
-        if (!$orden) {
+        if (! $orden) {
             return response()->json(['message' => 'Orden de trabajo no encontrada'], 404);
         }
 
-        if (!$this->canAccessOrden($user, $orden)) {
+        if (! $this->canAccessOrden($user, $orden)) {
             return response()->json(['message' => 'No autorizado para actualizar esta orden'], 403);
         }
 
         // Si se intenta mover a Aprobada/Cerrada, o devolver desde Pendiente Auditoria a En Progreso, solo jefe de taller o admin
-        $isAuditAction = in_array($request->estado, ['Aprobada', 'Cerrada']) || 
+        $isAuditAction = in_array($request->estado, ['Aprobada', 'Cerrada']) ||
                          ($orden->estado === 'Pendiente Auditoria' && $request->estado === 'En Progreso');
 
-        if ($isAuditAction && !$user->isAdmin() && !$user->isJefeDeTaller()) {
+        if ($isAuditAction && ! $user->isAdmin() && ! $user->isJefeDeTaller()) {
             return response()->json(['message' => 'Solo el jefe de taller o el administrador pueden auditar y aprobar/rechazar órdenes de trabajo'], 403);
         }
 
@@ -261,7 +322,7 @@ class OrdenTrabajoApiController extends Controller
 
         return response()->json([
             'message' => 'Estado actualizado correctamente',
-            'orden' => $orden
+            'orden' => $orden,
         ]);
     }
 
@@ -274,14 +335,14 @@ class OrdenTrabajoApiController extends Controller
         ]);
 
         $user = $request->user();
-        
-        if (!$user->isAdmin() && !$user->isJefeDeTaller()) {
+
+        if (! $user->isAdmin() && ! $user->isJefeDeTaller()) {
             return response()->json(['message' => 'No autorizado para editar esta orden'], 403);
         }
 
         $orden = OrdenTrabajo::find($id);
 
-        if (!$orden) {
+        if (! $orden) {
             return response()->json(['message' => 'Orden de trabajo no encontrada'], 404);
         }
 
@@ -319,7 +380,7 @@ class OrdenTrabajoApiController extends Controller
 
         return response()->json([
             'message' => 'Orden de trabajo actualizada correctamente',
-            'orden' => $orden->load(['vehiculo', 'mecanico'])
+            'orden' => $orden->load(['vehiculo', 'mecanico']),
         ]);
     }
 
@@ -336,7 +397,7 @@ class OrdenTrabajoApiController extends Controller
 
         $orden = OrdenTrabajo::find($id);
 
-        if (!$orden) {
+        if (! $orden) {
             return response()->json(['message' => 'Orden de trabajo no encontrada'], 404);
         }
 
@@ -353,9 +414,9 @@ class OrdenTrabajoApiController extends Controller
                 $cantidad = (float) $repuesto['cantidad'];
                 $producto = Producto::lockForUpdate()->find($repuesto['producto_id']);
 
-                if (!$producto || $producto->producto_stock_actual < $cantidad) {
+                if (! $producto || $producto->producto_stock_actual < $cantidad) {
                     throw ValidationException::withMessages([
-                        'repuestos' => ["Stock insuficiente para: {$producto->producto_nombre}"]
+                        'repuestos' => ["Stock insuficiente para: {$producto->producto_nombre}"],
                     ]);
                 }
 
@@ -376,17 +437,19 @@ class OrdenTrabajoApiController extends Controller
 
             return response()->json([
                 'message' => 'Repuestos añadidos correctamente',
-                'orden' => $orden->load(['vehiculo', 'mecanico', 'movimientos_inventario.producto', 'sesiones.empleado'])
+                'orden' => $orden->load(['vehiculo', 'mecanico', 'movimientos_inventario.producto', 'sesiones.empleado']),
             ]);
         } catch (ValidationException $e) {
             DB::rollBack();
+
             return response()->json([
                 'message' => 'Error de validación de stock',
                 'errors' => $e->errors(),
             ], 422);
         } catch (\Exception $e) {
             DB::rollBack();
-            return response()->json(['message' => 'Error al añadir repuestos: ' . $e->getMessage()], 500);
+
+            return $this->workOrderServerError($e, (int) $user->id, null);
         }
     }
 
@@ -394,14 +457,14 @@ class OrdenTrabajoApiController extends Controller
     {
         $user = $request->user();
 
-        if (!$user->isAdmin()) {
+        if (! $user->isAdmin()) {
             return response()->json(['message' => 'No autorizado para eliminar órdenes de trabajo'], 403);
         }
 
         return DB::transaction(function () use ($id, $user) {
             $orden = OrdenTrabajo::find($id);
 
-            if (!$orden) {
+            if (! $orden) {
                 return response()->json(['message' => 'Orden de trabajo no encontrada'], 404);
             }
 
@@ -440,8 +503,83 @@ class OrdenTrabajoApiController extends Controller
         });
     }
 
-    private function resolveDefaultBodegaId(): ?int
+    private function resolveDefaultBodegaId(): int
     {
-        return Bodega::value('bodega_id');
+        return (int) $this->warehouseResolver->resolve()->bodega_id;
+    }
+
+    private function findWorkOrderOperation(int $actorId, string $operationId, bool $lock = false): ?OrdenTrabajo
+    {
+        $query = OrdenTrabajo::query()
+            ->where('created_by_user_id', $actorId)
+            ->where('client_operation_id', $operationId);
+
+        return ($lock ? $query->lockForUpdate() : $query)->first();
+    }
+
+    private function workOrderReplayResponse(OrdenTrabajo $order, string $operationHash): JsonResponse
+    {
+        if (! hash_equals((string) $order->client_operation_hash, $operationHash)) {
+            return response()->json([
+                'message' => 'client_operation_id ya fue utilizado con una orden diferente.',
+            ], 409);
+        }
+
+        return response()->json([
+            'message' => 'La orden ya había sido registrada.',
+            'orden' => $order->load(['vehiculo', 'movimientos_inventario.producto']),
+            'idempotent_replay' => true,
+            'idempotency_protected' => true,
+        ]);
+    }
+
+    /** @param array<string, mixed> $validated */
+    private function workOrderOperationPayload(array $validated, int $warehouseId): array
+    {
+        $payload = [
+            'bodega_id' => $warehouseId,
+            'vehiculo_id' => (int) $validated['vehiculo_id'],
+            'mecanico_asignado_id' => isset($validated['mecanico_asignado_id'])
+                ? (int) $validated['mecanico_asignado_id']
+                : null,
+            'prioridad' => $validated['prioridad'],
+            'descripcion' => $validated['descripcion'],
+            'repuestos' => $validated['repuestos'] ?? [],
+            'herramientas' => $validated['herramientas'] ?? [],
+            'foto_evidencia' => $validated['foto_evidencia'] ?? null,
+            'notas_foto_evidencia' => $validated['notas_foto_evidencia'] ?? null,
+        ];
+
+        foreach (['repuestos', 'herramientas'] as $linesKey) {
+            $payload[$linesKey] = array_map(static fn (array $line): array => [
+                'producto_id' => (int) $line['producto_id'],
+                'cantidad' => (float) ($line['cantidad'] ?? 1),
+            ], $payload[$linesKey]);
+
+            usort($payload[$linesKey], static function (array $left, array $right): int {
+                return [$left['producto_id'], $left['cantidad']] <=> [$right['producto_id'], $right['cantidad']];
+            });
+        }
+
+        return $payload;
+    }
+
+    private function workOrderServerError(
+        Throwable $exception,
+        int $actorId,
+        ?string $operationId,
+    ): JsonResponse {
+        $errorId = (string) Str::uuid();
+        Log::error('Work-order operation failed.', [
+            'error_id' => $errorId,
+            'actor_id' => $actorId,
+            'client_operation_id' => $operationId,
+            'exception' => $exception,
+        ]);
+
+        return response()->json([
+            'message' => 'Error interno al procesar la orden de trabajo.',
+            'error_id' => $errorId,
+        ], 500);
     }
 }

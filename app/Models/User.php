@@ -5,9 +5,11 @@ namespace App\Models;
 use Filament\Models\Contracts\FilamentUser;
 use Filament\Panel;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 use Illuminate\Foundation\Auth\User as Authenticatable;
-use Laravel\Sanctum\HasApiTokens;
 use Illuminate\Notifications\Notifiable;
+use Illuminate\Support\Facades\Cache;
+use Laravel\Sanctum\HasApiTokens;
 
 class User extends Authenticatable implements FilamentUser
 {
@@ -18,7 +20,7 @@ class User extends Authenticatable implements FilamentUser
      */
     public function canAccessPanel(Panel $panel): bool
     {
-        return $this->isAdmin();
+        return $this->isAdmin() && $this->isOperationallyActive();
     }
 
     protected $fillable = [
@@ -39,6 +41,15 @@ class User extends Authenticatable implements FilamentUser
     protected $hidden = [
         'password',
         'remember_token',
+        'email',
+        'email_verified_at',
+        'phone',
+        'license_number',
+        'cargo',
+        'fcm_token',
+        'fcm_token_updated_at',
+        'permisos',
+        'permisos_efectivos',
     ];
 
     protected function casts(): array
@@ -79,6 +90,25 @@ class User extends Authenticatable implements FilamentUser
         return strtolower((string) $this->role) === 'admin';
     }
 
+    public function empleado(): HasOne
+    {
+        return $this->hasOne(Empleado::class, 'user_id');
+    }
+
+    /**
+     * Technical identities without an employee record (for example a system
+     * administrator) remain valid. Linked identities are valid only while the
+     * employee is active.
+     */
+    public function isOperationallyActive(): bool
+    {
+        $employee = $this->relationLoaded('empleado')
+            ? $this->empleado
+            : $this->empleado()->first();
+
+        return $employee === null || $employee->estado === 'activo';
+    }
+
     /**
      * Determina si el usuario es jefe de taller.
      */
@@ -107,7 +137,7 @@ class User extends Authenticatable implements FilamentUser
         $roleKey = strtolower((string) $this->role);
 
         return once(function () use ($roleKey) {
-            $cached = \Illuminate\Support\Facades\Cache::remember(
+            $cached = Cache::remember(
                 "role_permisos_{$roleKey}",
                 now()->addHour(),
                 fn () => RolePermiso::where('role', $roleKey)->value('permisos')
@@ -143,6 +173,7 @@ class User extends Authenticatable implements FilamentUser
         }
 
         $perms = $this->effectivePermissions();
+
         return in_array("{$modulo}.read", $perms, true) || in_array("{$modulo}.write", $perms, true);
     }
 
@@ -233,11 +264,11 @@ class User extends Authenticatable implements FilamentUser
             $moduleName = explode('.', $p)[0];
             $action = explode('.', $p)[1] ?? '';
             $actionLabel = $action === 'read' ? 'Lectura' : ($action === 'write' ? 'Escritura' : '');
-            
+
             $moduleLabel = $modulos[$moduleName] ?? $moduleName;
             $fullLabel = trim("{$moduleLabel} {$actionLabel}");
-            
-            if (!in_array($fullLabel, $labels)) {
+
+            if (! in_array($fullLabel, $labels)) {
                 $labels[] = $fullLabel;
             }
         }

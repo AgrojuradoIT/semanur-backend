@@ -11,7 +11,7 @@ return new class extends Migration
      */
     public function up(): void
     {
-        if (!Schema::hasColumn('orden_trabajos', 'notas_auditoria')) {
+        if (! Schema::hasColumn('orden_trabajos', 'notas_auditoria')) {
             Schema::table('orden_trabajos', function (Blueprint $table) {
                 $table->text('notas_auditoria')->nullable()->after('foto_evidencia');
             });
@@ -23,8 +23,8 @@ return new class extends Migration
      */
     public function down(): void
     {
-        Schema::table('orden_trabajos', function (Blueprint $table) {
-            //
-        });
+        throw new RuntimeException(
+            'Forward-only migration: work-order audit notes must be retained. Restore a verified backup for rollback.',
+        );
     }
 };

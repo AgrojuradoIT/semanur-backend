@@ -5,20 +5,28 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\CombustibleRequest;
 use App\Http\Requests\UpdateCombustibleRequest;
-use App\Models\Bodega;
 use App\Models\BodegaProducto;
 use App\Models\Producto;
 use App\Models\RegistroCombustible;
 use App\Models\TransaccionInventario;
 use App\Services\CombustibleService;
+use App\Services\Inventory\InventoryWarehouseResolver;
+use App\Support\ClientOperationHasher;
 use Carbon\Carbon;
+use Illuminate\Database\QueryException;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Str;
+use Illuminate\Validation\ValidationException;
+use Throwable;
 
 class CombustibleApiController extends Controller
 {
     public function __construct(
         private readonly CombustibleService $combustibleService,
+        private readonly InventoryWarehouseResolver $warehouseResolver,
     ) {}
 
     public function index(Request $request)
@@ -51,10 +59,10 @@ class CombustibleApiController extends Controller
                     $eq->where('name', 'like', "%{$search}%")
                         ->orWhere('nombre', 'like', "%{$search}%");
                 })->orWhere('tercero_nombre', 'like', "%{$search}%")
-                  ->orWhere('labor', 'like', "%{$search}%")
-                  ->orWhere('notas', 'like', "%{$search}%")
-                  ->orWhere('estacion_servicio', 'like', "%{$search}%")
-                  ->orWhere('placa_manual', 'like', "%{$search}%");
+                    ->orWhere('labor', 'like', "%{$search}%")
+                    ->orWhere('notas', 'like', "%{$search}%")
+                    ->orWhere('estacion_servicio', 'like', "%{$search}%")
+                    ->orWhere('placa_manual', 'like', "%{$search}%");
             });
         }
         $perPageParam = $request->get('per_page', 25);
@@ -111,18 +119,61 @@ class CombustibleApiController extends Controller
         ]);
     }
 
-    public function store(CombustibleRequest $request)
+    public function store(CombustibleRequest $request): JsonResponse
     {
-        try {
-            return DB::transaction(function () use ($request) {
-                $empleadoId = in_array($request->tipo_destino, ['vehiculo', 'maquinaria', 'equipo_menor']) ? $request->empleado_id : null;
+        $validated = $request->validated();
+        $actorId = (int) $request->user()->id;
+        $operationId = $validated['client_operation_id'] ?? null;
 
-                $resolvedProduct = $this->combustibleService->resolveCombustibleProducto($request->tipo_combustible);
+        try {
+            $warehouse = $this->warehouseResolver->resolve(
+                isset($validated['bodega_id']) ? (int) $validated['bodega_id'] : null,
+            );
+            $operationHash = $operationId === null
+                ? null
+                : ClientOperationHasher::hash($this->fuelOperationPayload($validated, $warehouse->bodega_id));
+
+            if ($operationId !== null) {
+                $existing = $this->findFuelOperation($actorId, $operationId);
+                if ($existing !== null) {
+                    return $this->fuelReplayResponse($existing, $operationHash);
+                }
+            } else {
+                Log::notice('Fuel write received without client_operation_id during compatibility rollout.', [
+                    'actor_id' => $actorId,
+                ]);
+            }
+
+            $registro = DB::transaction(function () use (
+                $validated,
+                $actorId,
+                $operationId,
+                $operationHash,
+                $warehouse,
+            ): RegistroCombustible {
+                if ($operationId !== null) {
+                    $existing = $this->findFuelOperation($actorId, $operationId, true);
+                    if ($existing !== null) {
+                        if (! hash_equals((string) $existing->client_operation_hash, (string) $operationHash)) {
+                            throw ValidationException::withMessages([
+                                'client_operation_id' => 'La clave ya fue usada con un abastecimiento diferente.',
+                            ]);
+                        }
+
+                        return $existing;
+                    }
+                }
+
+                $empleadoId = in_array($validated['tipo_destino'], ['vehiculo', 'maquinaria', 'equipo_menor'], true)
+                    ? ($validated['empleado_id'] ?? null)
+                    : null;
+
+                $resolvedProduct = $this->combustibleService->resolveCombustibleProducto($validated['tipo_combustible']);
 
                 if (! $resolvedProduct) {
-                    return response()->json([
-                        'message' => "No se encontró el producto de combustible ({$request->tipo_combustible}). Verifique el inventario.",
-                    ], 422);
+                    throw ValidationException::withMessages([
+                        'tipo_combustible' => "No se encontró el producto de combustible ({$validated['tipo_combustible']}).",
+                    ]);
                 }
 
                 $producto = Producto::query()
@@ -130,84 +181,101 @@ class CombustibleApiController extends Controller
                     ->lockForUpdate()
                     ->firstOrFail();
 
-                if ($producto->producto_stock_actual < $request->cantidad_galones) {
-                    return response()->json([
-                        'message' => "Stock insuficiente de {$request->tipo_combustible}. Stock actual: {$producto->producto_stock_actual}",
-                    ], 422);
+                if ($producto->producto_stock_actual < $validated['cantidad_galones']) {
+                    throw ValidationException::withMessages([
+                        'cantidad_galones' => "Stock insuficiente de {$validated['tipo_combustible']}. Stock actual: {$producto->producto_stock_actual}",
+                    ]);
                 }
 
                 [$refType, $refId, $notas] = $this->combustibleService->buildReferencia(
-                    $request->tipo_destino,
-                    $request->vehiculo_id,
-                    $request->tercero_nombre,
-                    $request->labor,
+                    $validated['tipo_destino'],
+                    $validated['vehiculo_id'] ?? null,
+                    $validated['tercero_nombre'] ?? null,
+                    $validated['labor'] ?? null,
                 );
 
-                $bodega = $this->resolveDefaultBodega();
                 $bodegaStock = BodegaProducto::query()
-                    ->where('bodega_id', $bodega->bodega_id)
+                    ->where('bodega_id', $warehouse->bodega_id)
                     ->where('producto_id', $producto->producto_id)
                     ->lockForUpdate()
                     ->first();
 
                 if (! $bodegaStock) {
-                    return response()->json([
-                        'message' => "El producto {$request->tipo_combustible} no tiene saldo configurado en {$bodega->nombre}.",
-                    ], 422);
+                    throw ValidationException::withMessages([
+                        'bodega_id' => "El producto {$validated['tipo_combustible']} no tiene saldo configurado en {$warehouse->nombre}.",
+                    ]);
                 }
 
-                if ((float) $bodegaStock->cantidad < (float) $request->cantidad_galones) {
-                    return response()->json([
-                        'message' => "Stock insuficiente de {$request->tipo_combustible} en {$bodega->nombre}. Stock actual: {$bodegaStock->cantidad}",
-                    ], 422);
+                if ((float) $bodegaStock->cantidad < (float) $validated['cantidad_galones']) {
+                    throw ValidationException::withMessages([
+                        'cantidad_galones' => "Stock insuficiente de {$validated['tipo_combustible']} en {$warehouse->nombre}. Stock actual: {$bodegaStock->cantidad}",
+                    ]);
                 }
 
                 $transaccion = TransaccionInventario::create([
                     'producto_id' => $producto->producto_id,
-                    'bodega_id' => $bodega->bodega_id,
-                    'usuario_id' => $request->user()->id,
+                    'bodega_id' => $warehouse->bodega_id,
+                    'usuario_id' => $actorId,
                     'transaccion_tipo' => 'salida',
-                    'transaccion_cantidad' => $request->cantidad_galones,
+                    'transaccion_cantidad' => $validated['cantidad_galones'],
                     'transaccion_motivo' => 'Consumo de Combustible (Interno)',
                     'transaccion_referencia_id' => $refId,
                     'transaccion_referencia_type' => $refType,
                     'transaccion_notas' => $notas,
                 ]);
 
-                $registro = RegistroCombustible::create([
-                    'vehiculo_id' => $request->vehiculo_id,
+                return RegistroCombustible::create([
+                    'vehiculo_id' => $validated['vehiculo_id'] ?? null,
                     'empleado_id' => $empleadoId,
-                    'tercero_nombre' => $request->tercero_nombre,
-                    'tipo_destino' => $request->tipo_destino,
-                    'tipo_combustible' => $request->tipo_combustible,
-                    'usuario_id' => $request->user()->id,
+                    'tercero_nombre' => $validated['tercero_nombre'] ?? null,
+                    'tipo_destino' => $validated['tipo_destino'],
+                    'tipo_combustible' => $validated['tipo_combustible'],
+                    'usuario_id' => $actorId,
+                    'client_operation_id' => $operationId,
+                    'client_operation_hash' => $operationHash,
                     'fecha' => Carbon::now(),
-                    'cantidad_galones' => $request->cantidad_galones,
-                    'valor_total' => $request->valor_total ?? 0,
-                    'horometro_actual' => $request->horometro_actual,
-                    'kilometraje_actual' => $request->kilometraje_actual,
-                    'estacion_servicio' => $request->estacion_servicio,
-                    'placa_manual' => $request->placa_manual,
-                    'notas' => $request->notas,
-                    'labor' => $request->labor,
+                    'cantidad_galones' => $validated['cantidad_galones'],
+                    'valor_total' => $validated['valor_total'] ?? 0,
+                    'horometro_actual' => $validated['horometro_actual'] ?? null,
+                    'kilometraje_actual' => $validated['kilometraje_actual'] ?? null,
+                    'estacion_servicio' => $validated['estacion_servicio'] ?? null,
+                    'placa_manual' => $validated['placa_manual'] ?? null,
+                    'notas' => $validated['notas'] ?? null,
+                    'labor' => $validated['labor'] ?? null,
                     'transaccion_id' => $transaccion->transaccion_id,
                 ]);
-
-                return response()->json([
-                    'message' => 'Registro de combustible creado con éxito',
-                    'registro' => $registro->load(['vehiculo', 'empleado']),
-                ], 201);
             });
-        } catch (\Exception $e) {
-            \Log::error('Error en CombustibleApiController@store: '.$e->getMessage(), [
-                'exception' => $e,
-                'request' => $request->all(),
-            ]);
+
+            $idempotentReplay = $operationId !== null && ! $registro->wasRecentlyCreated;
 
             return response()->json([
-                'message' => 'Error interno al registrar abastecimiento',
-                'error' => $e->getMessage(),
-            ], 500);
+                'message' => $idempotentReplay
+                    ? 'El abastecimiento ya había sido registrado.'
+                    : 'Registro de combustible creado con éxito',
+                'registro' => $registro->load(['vehiculo', 'empleado']),
+                'idempotent_replay' => $idempotentReplay,
+                'idempotency_protected' => $operationId !== null,
+            ], $idempotentReplay ? 200 : 201);
+        } catch (ValidationException $exception) {
+            if ($operationId !== null && isset($operationHash)) {
+                $existing = $this->findFuelOperation($actorId, $operationId);
+                if ($existing !== null) {
+                    return $this->fuelReplayResponse($existing, $operationHash);
+                }
+            }
+
+            throw $exception;
+        } catch (QueryException $exception) {
+            if ($operationId !== null && isset($operationHash)) {
+                $existing = $this->findFuelOperation($actorId, $operationId);
+                if ($existing !== null) {
+                    return $this->fuelReplayResponse($existing, $operationHash);
+                }
+            }
+
+            return $this->fuelServerError($exception, $actorId, $operationId);
+        } catch (Throwable $exception) {
+            return $this->fuelServerError($exception, $actorId, $operationId);
         }
     }
 
@@ -427,11 +495,65 @@ class CombustibleApiController extends Controller
         ];
     }
 
-    private function resolveDefaultBodega(): Bodega
+    private function findFuelOperation(int $actorId, string $operationId, bool $lock = false): ?RegistroCombustible
     {
-        return Bodega::query()->firstOrCreate(
-            ['tipo' => 'estandar'],
-            ['nombre' => 'Bodega Principal', 'descripcion' => 'Bodega central por defecto'],
-        );
+        $query = RegistroCombustible::query()
+            ->where('usuario_id', $actorId)
+            ->where('client_operation_id', $operationId);
+
+        return ($lock ? $query->lockForUpdate() : $query)->first();
+    }
+
+    private function fuelReplayResponse(RegistroCombustible $registro, string $operationHash): JsonResponse
+    {
+        if (! hash_equals((string) $registro->client_operation_hash, $operationHash)) {
+            return response()->json([
+                'message' => 'client_operation_id ya fue utilizado con un abastecimiento diferente.',
+            ], 409);
+        }
+
+        return response()->json([
+            'message' => 'El abastecimiento ya había sido registrado.',
+            'registro' => $registro->load(['vehiculo', 'empleado']),
+            'idempotent_replay' => true,
+            'idempotency_protected' => true,
+        ]);
+    }
+
+    /** @param array<string, mixed> $validated */
+    private function fuelOperationPayload(array $validated, int $warehouseId): array
+    {
+        return [
+            'bodega_id' => $warehouseId,
+            'vehiculo_id' => isset($validated['vehiculo_id']) ? (int) $validated['vehiculo_id'] : null,
+            'empleado_id' => isset($validated['empleado_id']) ? (int) $validated['empleado_id'] : null,
+            'tercero_nombre' => $validated['tercero_nombre'] ?? null,
+            'placa_manual' => $validated['placa_manual'] ?? null,
+            'tipo_destino' => $validated['tipo_destino'],
+            'tipo_combustible' => $validated['tipo_combustible'],
+            'cantidad_galones' => (float) $validated['cantidad_galones'],
+            'valor_total' => isset($validated['valor_total']) ? (float) $validated['valor_total'] : 0.0,
+            'horometro_actual' => isset($validated['horometro_actual']) ? (float) $validated['horometro_actual'] : null,
+            'kilometraje_actual' => isset($validated['kilometraje_actual']) ? (float) $validated['kilometraje_actual'] : null,
+            'estacion_servicio' => $validated['estacion_servicio'] ?? null,
+            'notas' => $validated['notas'] ?? null,
+            'labor' => $validated['labor'] ?? null,
+        ];
+    }
+
+    private function fuelServerError(Throwable $exception, int $actorId, ?string $operationId): JsonResponse
+    {
+        $errorId = (string) Str::uuid();
+        Log::error('Fuel registration failed.', [
+            'error_id' => $errorId,
+            'actor_id' => $actorId,
+            'client_operation_id' => $operationId,
+            'exception' => $exception,
+        ]);
+
+        return response()->json([
+            'message' => 'Error interno al registrar abastecimiento.',
+            'error_id' => $errorId,
+        ], 500);
     }
 }

@@ -90,12 +90,6 @@
         "allow-plugins": {
             "pestphp/pest-plugin": true,
             "php-http/discovery": true
-        },
-        "audit": {
-            "ignore": {
-                "PKSA-5bdf-2x61-v43c": "Ignored advisory",
-                "PKSA-y2cr-5h3j-g3ys": "Ignored advisory"
-            }
         }
     },
     "minimum-stability": "stable",

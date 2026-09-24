@@ -1,66 +1,56 @@
-# Guía de Despliegue en Hosting Compartido (Sin Consola/SSH)
+# Despliegue seguro del backend Semanur
 
-Esta guía te ayudará a subir tu backend Laravel a un hosting tipo cPanel/Plesk donde no puedes ejecutar comandos.
+## Reglas obligatorias
 
-## 1. Preparación de Base de Datos
-Como no tienes consola en el hosting, no podemos correr migraciones allá.
-1.  Abre tu gestor de base de datos local (HeidiSQL, phpMyAdmin, Workbench).
-2.  Selecciona tu base de datos local.
-3.  Haz una **Exportación completa** (Estructura y Datos) a un archivo `.sql` (ej: `semanur_backup.sql`).
+1. El `document root` del dominio debe apuntar exclusivamente a `backend/public`.
+2. Nunca se copian al directorio público `.env`, `app`, `bootstrap`, `config`,
+   `database`, `routes`, `storage`, `vendor`, `scripts`, pruebas, respaldos ni SQL.
+3. No existen scripts de mantenimiento por HTTP. Las operaciones se realizan en
+   una terminal autenticada de cPanel/SSH o mediante el pipeline.
+4. No se ejecuta `php artisan migrate` en producción. Los cambios de base de
+   datos se aplican mediante el paquete SQL revisado, después de un respaldo y
+   de ejecutar su preflight.
+5. Nunca se reemplaza la base de producción con una exportación local.
 
-## 2. Preparación de Archivos
-Asegúrate de tener todo listo para subir.
-1.  Ve a la carpeta del proyecto `backend`.
-2.  Debes subir **TODOS** los archivos y carpetas, **EXCEPTO**:
-    *   `.git`
-    *   `node_modules`
-    *   `tests`
-    *   `deploy_readme.md` (este archivo)
-3.  **IMPORTANTE**: Asegúrate de subir la carpeta `vendor`. (Si usas FileZilla, tardará un rato porque son muchos archivos pequeños).
+## Secuencia de liberación
 
-## 3. Subida al Servidor
-1.  Sube los archivos a la carpeta pública de tu hosting (usualmente `public_html` o `www`).
-    *   *Nota: He creado un archivo `.htaccess` en la raíz para que redirija todo automáticamente a la carpeta `public` que trae Laravel.*
+1. Crear snapshot consistente de la base y respaldo verificable de archivos.
+2. Ensayar restauración y SQL en un clon de producción.
+3. Construir un artefacto desde un commit identificado; excluir `.env`, pruebas,
+   logs, sesiones, archivos temporales y respaldos.
+4. Instalar el artefacto fuera del webroot y conservar `public/` como única raíz
+   pública.
+5. Configurar secretos directamente en el servidor (`APP_ENV=production`,
+   `APP_DEBUG=false`, HTTPS y credenciales propias del ambiente). Exigir además
+   `SESSION_ENCRYPT=true`, `SESSION_SECURE_COOKIE=true`, un `APP_KEY` único,
+   `LOG_LEVEL=warning` y `CORS_ALLOWED_ORIGINS` con los orígenes web exactos.
+6. Ejecutar desde terminal autenticada:
 
-## 4. Configuración del Entorno (.env)
-1.  En tu hosting, busca el archivo `.env`. Si no está, sube tu `.env` local y renómbralo (o edítalo).
-2.  Cambia las siguientes líneas para producción:
-    ```ini
-    APP_ENV=production
-    APP_DEBUG=false
-    APP_URL=https://backsm.agrojurado.com
+   ```bash
+   php scripts/operations/deploy.php
+   ```
 
-    DB_connection=mysql
-    DB_HOST=127.0.0.1  <-- Generalmente es localhost, verifica con tu hosting
-    DB_PORT=3306
-    DB_DATABASE=nombre_base_datos_hosting
-    DB_USERNAME=usuario_base_datos_hosting
-    DB_PASSWORD=contraseña_base_datos_hosting
-    ```
+   Este comando sólo prepara cachés/assets y **no modifica la base de datos**.
+7. Ejecutar el preflight SQL, aplicar el SQL aprobado y ejecutar el postflight.
+8. Realizar smoke tests autenticados en staging antes de cambiar tráfico.
 
-## 5. Importar Base de Datos
-1.  Entra al **phpMyAdmin** de tu hosting.
-2.  Selecciona la base de datos que creaste.
-3.  Ve a la pestaña **Importar**.
-4.  Sube el archivo `semanur_backup.sql` que generaste en el paso 1.
+## Controles del artefacto
 
-## 6. Scripts de Ayuda (Post-Install)
-Como no hay consola, he creado dos scripts PHP que puedes ejecutar desde el navegador para realizar tareas de mantenimiento.
+- `public/` sólo contiene `index.php`, `.htaccess`, `robots.txt`, favicon y assets
+  generados explícitamente aprobados.
+- Ningún `deploy.php`, `clear_cache.php`, `link_storage.php`, diagnóstico,
+  respaldo o archivo `.zip` puede aparecer bajo el webroot.
+- El servidor debe negar cualquier PHP distinto de `index.php` y el acceso
+  directo a `storage/apks` y `storage/media`; también debe negar archivos de
+  respaldo/artefactos (`zip`, `tar`, `sql`, `bak`, logs). En Nginx/IIS se deben
+  reproducir explícitamente estas reglas porque `.htaccess` sólo aplica a Apache.
+- Las versiones APK activas requieren SHA-256, tamaño, package name y huella del
+  firmante antes de ser publicadas.
+- `php artisan db:seed` está prohibido en producción y los seeders fallan cerrados
+  fuera de `local/testing`.
 
-### A. Enlazar Storage (Imágenes)
-Para que las imágenes públicas se vean:
-1.  Visita: `https://backsm.agrojurado.com/link_storage.php`
-2.  Debería decir "Enlace simbólico creado correctamente".
-3.  Por seguridad, **borra el archivo `link_storage.php`** después de usarlo.
+## Rollback
 
-### B. Limpiar Caché
-Si haces cambios en el `.env` o subes código nuevo y no lo ves reflejado:
-1.  Visita: `https://backsm.agrojurado.com/clear_cache.php`
-2.  Esto borrará la caché de configuración, rutas y vistas.
-
----
-## Solución de Problemas Comunes
-
-*   **Error 500**: Generalmente es un error en el archivo `.env` (credenciales mal puestas) o permisos de carpetas.
-*   **Permisos**: Asegúrate de que las carpetas `storage` y `bootstrap/cache` tengan permisos de escritura (755 o 775).
-*   **Imágenes rotas**: Ejecuta el script `link_storage.php`.
+Ante cualquier discrepancia, detener el cambio, conservar evidencia y restaurar
+el snapshot completo. No ejecutar migraciones, rollback de Laravel ni SQL
+correctivo improvisado sobre producción.

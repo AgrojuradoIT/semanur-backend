@@ -3,12 +3,12 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
-use Illuminate\Http\Request;
-use App\Models\TransaccionInventario;
 use App\Models\OrdenTrabajo;
-use App\Models\RegistroCombustible;
 use App\Models\PrestamoHerramienta;
+use App\Models\RegistroCombustible;
 use App\Models\RespuestaListaChequeo;
+use App\Models\TransaccionInventario;
+use Illuminate\Http\Request;
 
 class HistoryApiController extends Controller
 {
@@ -16,7 +16,13 @@ class HistoryApiController extends Controller
     {
         $limit = 100;
 
-        $movimientos = TransaccionInventario::with(['producto', 'usuario'])
+        $movimientos = TransaccionInventario::with([
+            'producto',
+            'usuario',
+            'bodega',
+            'transaccionRevertida.usuario',
+            'transaccionRevertida.producto',
+        ])
             ->orderBy('created_at', 'desc')
             ->limit($limit)
             ->get();

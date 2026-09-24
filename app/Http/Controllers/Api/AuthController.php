@@ -3,8 +3,11 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\Auth\ApiLoginRequest;
+use App\Http\Resources\AuthenticatedUserResource;
 use App\Models\User;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Validation\ValidationException;
 
@@ -13,34 +16,45 @@ class AuthController extends Controller
     private function canViewUsers(User $user): bool
     {
         $role = strtolower((string) $user->role);
+
         return in_array($role, ['admin', 'almacenista'], true);
     }
 
-    public function login(Request $request)
+    public function login(ApiLoginRequest $request)
     {
-        $request->validate([
-            'email' => 'required|email',
-            'password' => 'required',
-            'device_name' => 'required',
-        ]);
+        $credentials = $request->validated();
 
-        $user = User::where('email', $request->email)->first();
+        $user = User::query()
+            ->with('empleado')
+            ->where('email', $credentials['email'])
+            ->first();
 
-        if (!$user || !Hash::check($request->password, $user->password)) {
+        if (! $user
+            || ! Hash::check($credentials['password'], $user->password)
+            || ! $user->isOperationallyActive()) {
             throw ValidationException::withMessages([
                 'email' => ['Las credenciales proporcionadas son incorrectas.'],
             ]);
         }
 
         return response()->json([
-            'token' => $user->createToken($request->device_name)->plainTextToken,
-            'user' => $user,
+            'token' => $user->createToken($credentials['device_name'])->plainTextToken,
+            'user' => AuthenticatedUserResource::make($user)->resolve($request),
         ]);
     }
 
     public function logout(Request $request)
     {
-        $request->user()->currentAccessToken()?->delete();
+        DB::transaction(function () use ($request): void {
+            $authenticatedUser = $request->user();
+            $accessToken = $authenticatedUser->currentAccessToken();
+            $user = User::query()->findOrFail($authenticatedUser->getKey());
+            $user->forceFill([
+                'fcm_token' => null,
+                'fcm_token_updated_at' => null,
+            ])->save();
+            $accessToken?->delete();
+        });
 
         return response()->json(['message' => 'Sesion cerrada correctamente']);
     }
@@ -55,43 +69,61 @@ class AuthController extends Controller
 
         return response()->json([
             'token' => $user->createToken($tokenName)->plainTextToken,
-            'user' => $user,
+            'user' => AuthenticatedUserResource::make($user)->resolve($request),
         ]);
     }
 
     public function logoutAll(Request $request)
     {
-        $request->user()->tokens()->delete();
+        DB::transaction(function () use ($request): void {
+            $user = User::query()->findOrFail($request->user()->getKey());
+            $user->tokens()->delete();
+            $user->forceFill([
+                'fcm_token' => null,
+                'fcm_token_updated_at' => null,
+            ])->save();
+        });
 
         return response()->json(['message' => 'Todas las sesiones fueron cerradas']);
     }
 
     public function user(Request $request)
     {
-        return response()->json($request->user());
+        return response()->json(
+            AuthenticatedUserResource::make($request->user())->resolve($request)
+        );
     }
 
     public function index(Request $request)
     {
         $authUser = $request->user();
 
-        if (!$this->canViewUsers($authUser)) {
+        if (! $this->canViewUsers($authUser)) {
             return response()->json(['message' => 'No autorizado para consultar usuarios'], 403);
         }
 
-        return response()->json(
-            User::query()
-                ->select(['id', 'name', 'email', 'role', 'phone', 'license_number', 'cargo'])
-                ->orderBy('name')
-                ->get()
-        );
+        $users = User::query()
+            ->select(['id', 'name', 'email', 'role', 'phone', 'license_number', 'cargo'])
+            ->orderBy('name')
+            ->get()
+            ->map(fn (User $user): array => [
+                'id' => $user->id,
+                'name' => $user->name,
+                'email' => $user->email,
+                'role' => $user->role,
+                'phone' => $user->phone,
+                'license_number' => $user->license_number,
+                'cargo' => $user->cargo,
+            ]);
+
+        return response()->json($users);
     }
 
     public function updateProfile(Request $request)
     {
         $request->validate([
-            'name'           => 'sometimes|string|max:255',
-            'phone'          => 'sometimes|nullable|string|max:30',
+            'name' => 'sometimes|string|max:255',
+            'phone' => 'sometimes|nullable|string|max:30',
             'license_number' => 'sometimes|nullable|string|max:50',
         ]);
 
@@ -99,18 +131,20 @@ class AuthController extends Controller
         $user->fill($request->only(['name', 'phone', 'license_number']));
         $user->save();
 
-        return response()->json($user);
+        return response()->json(
+            AuthenticatedUserResource::make($user)->resolve($request)
+        );
     }
 
     public function updateFcmToken(Request $request)
     {
         $request->validate([
-            'fcm_token' => 'required|string',
+            'fcm_token' => ['present', 'nullable', 'string', 'max:4096'],
         ]);
 
-        $user = $request->user();
-        $user->fcm_token = $request->fcm_token;
-        $user->fcm_token_updated_at = now();
+        $user = User::query()->findOrFail($request->user()->getKey());
+        $user->fcm_token = $request->input('fcm_token');
+        $user->fcm_token_updated_at = $request->filled('fcm_token') ? now() : null;
         $user->save();
 
         return response()->json([

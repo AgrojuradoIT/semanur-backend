@@ -3,67 +3,30 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\DB;
-use App\Services\Inventory\ComprasImportService;
+use Illuminate\Support\Facades\Log;
 
 class InventarioImportApiController extends Controller
 {
-    public function __construct(
-        private readonly ComprasImportService $service
-    ) {
-    }
-
-    public function importCompras(Request $request)
+    public function importCompras(Request $request): JsonResponse
     {
-        $validated = $request->validate([
-            'file' => 'required|file|mimes:csv,txt,xls,xlsx',
-            'dry_run' => 'nullable|boolean',
-            'categoria_id' => 'nullable|exists:categorias,categoria_id',
-            'unidad_medida' => 'nullable|string|max:50',
-            'alerta_stock_minimo' => 'nullable|numeric|min:0',
+        // U9 — corte definitivo del CSV de compras (plan sección 13): este
+        // endpoint ya no acepta archivos ni muta stock bajo ninguna
+        // circunstancia. El retorno es incondicional (NO depende del flag
+        // INVENTORY_ORDERS_ENABLED): un rollback apaga los flujos nuevos pero
+        // NUNCA reactiva silenciosamente esta vía de ingreso. Se conservan el
+        // controlador, ComprasImportService y los datos históricos de
+        // inventario_importaciones; solo se retira la mutación.
+        Log::warning('Importación CSV de compras rechazada: endpoint retirado (410).', [
+            'user_id' => $request->user()?->id,
+            'path' => $request->path(),
         ]);
 
-        $file = $validated['file'];
-        $dryRun = $request->boolean('dry_run', true);
-
-        $options = [
-            'categoria_id' => $validated['categoria_id'] ?? null,
-            'unidad_medida' => $validated['unidad_medida'] ?? 'unidad',
-            'alerta_stock_minimo' => isset($validated['alerta_stock_minimo'])
-                ? (float) $validated['alerta_stock_minimo']
-                : 5.0,
-        ];
-
-        $rows = $this->service->parseFile($file);
-
-        if (empty($rows)) {
-            return response()->json([
-                'message' => 'El archivo no contiene filas de datos válidas.',
-            ], 422);
-        }
-
-        $preview = $this->service->buildPreview($rows, $options);
-
-        if ($dryRun) {
-            return response()->json([
-                'message' => 'Previsualizacion lista.',
-                'summary' => $preview['summary'],
-                'existing' => array_values($preview['existing']),
-                'new' => array_values($preview['new']),
-                'errors' => $preview['errors'],
-                'requires_confirmation' => true,
-            ]);
-        }
-
-        $user = $request->user();
-
-        $result = DB::transaction(function () use ($preview, $options, $user) {
-            return $this->service->applyImport($preview, $options, $user?->id);
-        });
-
-        return response()->json($result);
+        return response()->json([
+            'message' => 'La importación CSV de compras fue retirada. Registre la compra como pedido con sus evidencias y confirme la recepción física en bodega.',
+            'replacement' => '/api/web/inventory-orders',
+            'guidance' => 'Contabilidad crea el pedido con pantallazo Siigo + factura; bodega cuenta y confirma la recepción. Solo la recepción confirmada genera ingresos al ledger.',
+        ], 410);
     }
-
 }
-

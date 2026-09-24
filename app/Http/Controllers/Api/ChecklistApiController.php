@@ -7,25 +7,31 @@ use App\Models\Empleado;
 use App\Models\ListaChequeo;
 use App\Models\RespuestaListaChequeo;
 use App\Models\Vehiculo;
-use App\Models\User;
+use App\Services\Authorization\OperationalAccess;
+use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
-use Carbon\Carbon;
 
 class ChecklistApiController extends Controller
 {
-    // Removed resolveOperadorUserId as we now strictly use empleado_id in payloads
+    public function __construct(
+        private readonly OperationalAccess $access,
+    ) {}
 
     // Obtener listas de chequeo activas con sus items
     public function index(Request $request)
     {
+        $request->validate([
+            'tipo_vehiculo' => ['nullable', 'string', 'max:50'],
+        ]);
+
         $query = ListaChequeo::with('items')->where('activo', true);
 
         if ($request->has('tipo_vehiculo') && $request->tipo_vehiculo !== '') {
             $tipo = strtolower(trim($request->tipo_vehiculo));
             $query->where(function ($q) use ($tipo) {
                 $q->whereRaw('LOWER(tipo_vehiculo) = ?', [$tipo])
-                  ->orWhereRaw('LOWER(tipo_vehiculo) LIKE ?', ["%{$tipo}%"]);
+                    ->orWhereRaw('LOWER(tipo_vehiculo) LIKE ?', ["%{$tipo}%"]);
             });
         }
 
@@ -36,8 +42,8 @@ class ChecklistApiController extends Controller
                 ->where('activo', true)
                 ->where(function ($q) {
                     $q->whereNull('tipo_vehiculo')
-                      ->orWhere('tipo_vehiculo', '')
-                      ->orWhere('tipo_vehiculo', 'generico');
+                        ->orWhere('tipo_vehiculo', '')
+                        ->orWhere('tipo_vehiculo', 'generico');
                 })
                 ->get();
         }
@@ -60,19 +66,21 @@ class ChecklistApiController extends Controller
 
         if ($isFlutterApp) {
             $request->validate([
-                'vehiculo_id' => 'required|exists:vehiculos,vehiculo_id',
-                'empleado_id' => 'required', // Puede ser user_id o empleado_id
+                'vehiculo_id' => 'required|integer|exists:vehiculos,vehiculo_id',
+                'empleado_id' => 'required|integer|min:1', // Puede ser user_id o empleado_id
                 'checklist_data' => 'required',
-                'estado' => 'required|string',
-                'observaciones' => 'nullable|string',
+                'estado' => 'required|string|in:aprobado,rechazado,pendiente',
+                'observaciones' => 'nullable|string|max:5000',
+                'fecha' => 'nullable|date',
+                'horometro_actual' => 'nullable|numeric|min:0|max:9999999999.99',
             ]);
         } else {
             $request->validate([
-                'lista_chequeo_id' => 'required|exists:listas_chequeo,id',
-                'vehiculo_id' => 'required|exists:vehiculos,vehiculo_id',
-                'operador_id' => 'required', // Puede ser user_id o empleado_id
-                'respuestas' => 'required|array', // { item_id: valor }
-                'observaciones_generales' => 'nullable|string',
+                'lista_chequeo_id' => 'required|integer|exists:listas_chequeo,id',
+                'vehiculo_id' => 'required|integer|exists:vehiculos,vehiculo_id',
+                'operador_id' => 'required|integer|min:1', // Puede ser user_id o empleado_id
+                'respuestas' => 'required|array|min:1|max:500', // { item_id: valor }
+                'observaciones_generales' => 'nullable|string|max:5000',
             ]);
         }
 
@@ -80,31 +88,29 @@ class ChecklistApiController extends Controller
             if ($isFlutterApp) {
                 // Convertir user_id a empleado_id si es necesario
                 $empleadoId = (int) $request->empleado_id;
-                $empleado = Empleado::find($empleadoId);
-                
-                // Si no existe, buscar por user_id
-                if (!$empleado) {
-                    $empleado = Empleado::where('user_id', $empleadoId)->first();
-                }
-                
-                // Si aún no existe, intentar buscar por el usuario autenticado
-                if (!$empleado && $request->user()) {
-                    $empleado = Empleado::where('user_id', $request->user()->id)->first();
-                }
-                
-                if (!$empleado) {
+                $empleado = $this->resolveSubmittedEmployee($request, $empleadoId);
+
+                if (! $empleado) {
                     return response()->json([
                         'message' => 'Empleado no encontrado. Verifique que el usuario tenga un empleado asociado.',
                         'empleado_id_provided' => $empleadoId,
                     ], 422);
                 }
-                
+
+                $this->authorizeSubmission($request, $empleado, (int) $request->vehiculo_id);
+
                 $operadorId = $empleado->id;
                 $estado = strtolower($request->estado);
 
                 $respuestas = $request->checklist_data;
                 if (is_string($respuestas)) {
                     $respuestas = json_decode($respuestas, true);
+                }
+
+                if (! is_array($respuestas) || $respuestas === [] || count($respuestas) > 500) {
+                    throw \Illuminate\Validation\ValidationException::withMessages([
+                        'checklist_data' => ['El checklist debe contener entre 1 y 500 respuestas válidas.'],
+                    ]);
                 }
 
                 // Intentar asociar a una plantilla genérica para evitar foreign key constraint
@@ -134,16 +140,16 @@ class ChecklistApiController extends Controller
             } else {
                 // Legacy / Web format
                 $operadorId = (int) $request->operador_id;
-                
+
                 // Convertir user_id a empleado_id si es necesario
-                $empleado = Empleado::find($operadorId);
-                if (!$empleado) {
-                    $empleado = Empleado::where('user_id', $operadorId)->first();
+                $empleado = $this->resolveSubmittedEmployee($request, $operadorId);
+                if (! $empleado) {
+                    return response()->json(['message' => 'Empleado no encontrado.'], 422);
                 }
-                if ($empleado) {
-                    $operadorId = $empleado->id;
-                }
-                
+
+                $this->authorizeSubmission($request, $empleado, (int) $request->vehiculo_id);
+                $operadorId = $empleado->id;
+
                 $lista = ListaChequeo::with('items')->find($request->lista_chequeo_id);
                 $estado = 'aprobado';
 
@@ -173,20 +179,68 @@ class ChecklistApiController extends Controller
             return response()->json([
                 'message' => 'Lista de chequeo guardada exitosamente',
                 'data' => $respuesta,
-                'estado_final' => $estado
+                'estado_final' => $estado,
             ], 201);
         });
     }
 
     // Obtener historial de respuestas (opcional, para consultas)
-    public function history(Request $request) {
-         $query = RespuestaListaChequeo::with(['listaChequeo', 'vehiculo', 'operador'])
-                    ->orderBy('fecha', 'desc');
+    public function history(Request $request)
+    {
+        $validated = $request->validate([
+            'vehiculo_id' => ['nullable', 'integer', 'exists:vehiculos,vehiculo_id'],
+            'page' => ['nullable', 'integer', 'min:1'],
+        ]);
 
-         if ($request->has('vehiculo_id')) {
-             $query->where('vehiculo_id', $request->vehiculo_id);
-         }
-         
-         return response()->json($query->paginate(20));
+        $query = RespuestaListaChequeo::with(['listaChequeo', 'vehiculo', 'operador'])
+            ->orderBy('fecha', 'desc');
+
+        if (! $this->access->isSupervisor($request->user())) {
+            $employeeId = $this->access->employeeId($request->user());
+            $employeeId === null
+                ? $query->whereRaw('1 = 0')
+                : $query->where('operador_id', $employeeId);
+        }
+
+        if (isset($validated['vehiculo_id'])) {
+            $query->where('vehiculo_id', $validated['vehiculo_id']);
+        }
+
+        return response()->json($query->paginate(20));
+    }
+
+    private function resolveSubmittedEmployee(Request $request, int $submittedId): ?Empleado
+    {
+        if (! $this->access->isSupervisor($request->user())) {
+            $actorEmployee = Empleado::query()
+                ->where('user_id', $request->user()->getKey())
+                ->first();
+
+            if ($actorEmployee !== null
+                && in_array($submittedId, [(int) $actorEmployee->getKey(), (int) $request->user()->getKey()], true)) {
+                return $actorEmployee;
+            }
+        }
+
+        return Empleado::query()->find($submittedId)
+            ?? Empleado::query()->where('user_id', $submittedId)->first();
+    }
+
+    private function authorizeSubmission(Request $request, Empleado $employee, int $vehicleId): void
+    {
+        if ($this->access->isSupervisor($request->user())) {
+            return;
+        }
+
+        $actorEmployeeId = $this->access->employeeId($request->user());
+        $vehicle = Vehiculo::query()->findOrFail($vehicleId);
+
+        abort_unless(
+            $actorEmployeeId !== null
+                && $actorEmployeeId === (int) $employee->getKey()
+                && $this->access->canUseVehicleForChecklist($request->user(), $vehicle),
+            403,
+            'No autorizado para registrar el checklist de otro empleado o vehículo.',
+        );
     }
 }

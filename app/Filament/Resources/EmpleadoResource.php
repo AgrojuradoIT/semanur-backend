@@ -3,29 +3,26 @@
 namespace App\Filament\Resources;
 
 use App\Filament\Resources\EmpleadoResource\Pages;
+use App\Filament\Resources\EmpleadoResource\RelationManagers\OrdenesTrabajoRelationManager;
+use App\Filament\Resources\EmpleadoResource\RelationManagers\ProgramacionesRelationManager;
 use App\Models\Cargo;
 use App\Models\Empleado;
-use Filament\Actions\BulkActionGroup;
-use Filament\Actions\DeleteAction;
-use Filament\Actions\DeleteBulkAction;
+use App\Models\User;
+use BackedEnum;
 use Filament\Actions\EditAction;
 use Filament\Forms;
 use Filament\Resources\Resource;
+use Filament\Schemas\Components\Tabs;
+use Filament\Schemas\Components\Tabs\Tab;
 use Filament\Schemas\Schema;
 use Filament\Tables;
 use Filament\Tables\Table;
-use App\Models\User;
-use Filament\Schemas\Components\Tabs;
-use Filament\Schemas\Components\Tabs\Tab;
-use App\Filament\Resources\EmpleadoResource\RelationManagers\ProgramacionesRelationManager;
-use App\Filament\Resources\EmpleadoResource\RelationManagers\OrdenesTrabajoRelationManager;
-use BackedEnum;
 
 class EmpleadoResource extends Resource
 {
     protected static ?string $model = Empleado::class;
 
-    protected static string | BackedEnum | null $navigationIcon = 'heroicon-o-users';
+    protected static string|BackedEnum|null $navigationIcon = 'heroicon-o-users';
 
     protected static ?string $navigationLabel = 'Empleados';
 
@@ -145,12 +142,6 @@ class EmpleadoResource extends Resource
             ->filters([])
             ->recordActions([
                 EditAction::make(),
-                DeleteAction::make(),
-            ])
-            ->toolbarActions([
-                BulkActionGroup::make([
-                    DeleteBulkAction::make(),
-                ]),
             ]);
     }
 

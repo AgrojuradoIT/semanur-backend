@@ -11,7 +11,7 @@ return new class extends Migration
      */
     public function up(): void
     {
-        if (!Schema::hasColumn('users', 'fcm_token')) {
+        if (! Schema::hasColumn('users', 'fcm_token')) {
             Schema::table('users', function (Blueprint $table) {
                 $table->string('fcm_token', 255)->nullable()->after('password');
                 $table->timestamp('fcm_token_updated_at')->nullable()->after('fcm_token');
@@ -24,8 +24,8 @@ return new class extends Migration
      */
     public function down(): void
     {
-        Schema::table('users', function (Blueprint $table) {
-            $table->dropColumn(['fcm_token', 'fcm_token_updated_at']);
-        });
+        throw new RuntimeException(
+            'Forward-only migration: notification-token columns must be retained. Restore a verified backup for rollback.',
+        );
     }
 };

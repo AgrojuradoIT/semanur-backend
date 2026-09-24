@@ -2,9 +2,9 @@
 
 namespace App\Models;
 
+use Carbon\Carbon;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
-use Carbon\Carbon;
 
 class OrdenTrabajo extends Model
 {
@@ -20,6 +20,9 @@ class OrdenTrabajo extends Model
         'descripcion',
         'foto_evidencia',
         'notas_auditoria',
+        'created_by_user_id',
+        'client_operation_id',
+        'client_operation_hash',
     ];
 
     protected $casts = [
@@ -27,6 +30,7 @@ class OrdenTrabajo extends Model
         'fecha_fin' => 'datetime:Y-m-d H:i:s',
         'mecanico_asignado_id' => 'integer',
         'vehiculo_id' => 'integer',
+        'created_by_user_id' => 'integer',
     ];
 
     /**
@@ -49,6 +53,7 @@ class OrdenTrabajo extends Model
         if ($carbon->tzName !== 'America/Bogota') {
             $carbon = $carbon->setTimezone('America/Bogota');
         }
+
         return $carbon->toIso8601String();
     }
 
@@ -57,10 +62,15 @@ class OrdenTrabajo extends Model
         return $this->belongsTo(Vehiculo::class, 'vehiculo_id', 'vehiculo_id');
     }
 
+    public function creador(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'created_by_user_id', 'id');
+    }
+
     public function movimientos_inventario()
     {
         return $this->hasMany(TransaccionInventario::class, 'transaccion_referencia_id', 'orden_trabajo_id')
-                    ->where('transaccion_referencia_type', 'OrdenTrabajo');
+            ->where('transaccion_referencia_type', 'OrdenTrabajo');
     }
 
     public function mecanico(): BelongsTo
@@ -76,7 +86,7 @@ class OrdenTrabajo extends Model
     public function evidencias()
     {
         return $this->hasMany(Media::class, 'entity_id', 'orden_trabajo_id')
-                    ->where('entity_type', 'orden_trabajo')
-                    ->where('module', 'taller');
+            ->where('entity_type', 'orden_trabajo')
+            ->where('module', 'taller');
     }
 }

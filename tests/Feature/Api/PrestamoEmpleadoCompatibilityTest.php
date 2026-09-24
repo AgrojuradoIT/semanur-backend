@@ -2,11 +2,13 @@
 
 namespace Tests\Feature\Api;
 
+use App\Models\Bodega;
 use App\Models\Categoria;
 use App\Models\Empleado;
 use App\Models\Producto;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\DB;
 use Laravel\Sanctum\Sanctum;
 use Tests\TestCase;
 
@@ -20,10 +22,13 @@ class PrestamoEmpleadoCompatibilityTest extends TestCase
         $mecanicoUser = User::factory()->create(['role' => 'mecanico']);
         $mecanicoEmpleado = $this->crearEmpleado($mecanicoUser->id, 'Mecanico Uno');
         $producto = $this->crearProducto(10);
+        $bodega = Bodega::create(['nombre' => 'Principal', 'tipo' => 'estandar']);
+        $this->setStockBodega($bodega, $producto, 10);
 
         Sanctum::actingAs($admin);
 
         $response = $this->postJson('/api/prestamos', [
+            'bodega_id' => $bodega->bodega_id,
             'producto_id' => $producto->producto_id,
             'mecanico_id' => $mecanicoEmpleado->id,
             'prestamo_cantidad' => 2,
@@ -76,7 +81,7 @@ class PrestamoEmpleadoCompatibilityTest extends TestCase
 
         return Producto::create([
             'categoria_id' => $categoria->categoria_id,
-            'producto_sku' => 'SKU-' . uniqid(),
+            'producto_sku' => 'SKU-'.uniqid(),
             'producto_nombre' => 'Llave inglesa',
             'producto_unidad_medida' => 'unidad',
             'producto_stock_actual' => $stockInicial,
@@ -84,5 +89,15 @@ class PrestamoEmpleadoCompatibilityTest extends TestCase
             'producto_precio_costo' => 5000,
         ]);
     }
-}
 
+    private function setStockBodega(Bodega $bodega, Producto $producto, float $cantidad): void
+    {
+        DB::table('bodega_producto')->insert([
+            'bodega_id' => $bodega->bodega_id,
+            'producto_id' => $producto->producto_id,
+            'cantidad' => $cantidad,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+    }
+}

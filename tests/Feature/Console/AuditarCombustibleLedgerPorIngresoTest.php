@@ -6,6 +6,7 @@ use App\Models\Categoria;
 use App\Models\Producto;
 use App\Models\TransaccionInventario;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\DB;
 use Tests\TestCase;
 
 class AuditarCombustibleLedgerPorIngresoTest extends TestCase
@@ -33,6 +34,7 @@ class AuditarCombustibleLedgerPorIngresoTest extends TestCase
         $this->createMovement($gasoline, 'salida', 200, '2026-08-03 08:00:00');
         $this->createMovement($gasoline, 'ingreso', 100, '2026-08-04 08:00:00');
         $this->createMovement($gasoline, 'salida', 50, '2026-08-05 08:00:00');
+        $gasoline->forceFill(['producto_stock_actual' => 430])->saveQuietly();
 
         $this->artisan('combustible:auditar-ledger-por-ingreso', [
             '--producto' => ['gasolina'],
@@ -52,17 +54,15 @@ class AuditarCombustibleLedgerPorIngresoTest extends TestCase
         float $quantity,
         string $createdAt,
     ): TransaccionInventario {
-        $movement = TransaccionInventario::create([
+        $movementId = DB::table('transaccion_inventarios')->insertGetId([
             'producto_id' => $product->producto_id,
             'transaccion_tipo' => $type,
             'transaccion_cantidad' => $quantity,
             'transaccion_motivo' => 'Movimiento de prueba',
-        ]);
-        $movement->forceFill([
             'created_at' => $createdAt,
             'updated_at' => $createdAt,
-        ])->saveQuietly();
+        ]);
 
-        return $movement;
+        return TransaccionInventario::findOrFail($movementId);
     }
 }

@@ -3,12 +3,31 @@
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Support\Facades\Schema;
 
 class Empleado extends Model
 {
 
     protected $table = 'empleados';
     protected $appends = ['name', 'nombre_completo'];
+
+    /**
+     * Employee records are embedded in many operational API responses. Keep
+     * personal data hidden by default and expose it only through the
+     * permission-gated EmpleadoDetailResource.
+     */
+    protected $hidden = [
+        'documento',
+        'telefono',
+        'direccion',
+        'licencia_conduccion',
+        'categoria_licencia',
+        'vencimiento_licencia',
+        'user_id',
+        'resumen_profesional',
+        'fecha_retiro',
+        'motivo_retiro',
+    ];
 
     protected $fillable = [
         'nombres',
@@ -57,7 +76,13 @@ class Empleado extends Model
 
     public function checklists()
     {
-        return $this->hasMany(ChecklistPreoperacional::class, 'empleado_id', 'id');
+        if (Schema::hasColumn('checklists_preoperacionales', 'empleado_id')) {
+            return $this->hasMany(ChecklistPreoperacional::class, 'empleado_id', 'id');
+        }
+
+        // Compatibility for installations where the historical employee FK
+        // migration has not yet replaced usuario_id.
+        return $this->hasMany(ChecklistPreoperacional::class, 'usuario_id', 'user_id');
     }
 
     public function respuestasListaChequeo()

@@ -3,196 +3,225 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\StoreMovimientoInventarioRequest;
+use App\Http\Resources\MovimientoInventarioResource;
 use App\Models\Bodega;
-use App\Models\Producto;
 use App\Models\TransaccionInventario;
 use App\Services\NotificacionService;
+use Illuminate\Database\QueryException;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\Rule;
+use Illuminate\Validation\ValidationException;
 
 class MovimientoInventarioApiController extends Controller
 {
-    public function index(Request $request)
+    public function index(Request $request): JsonResponse
     {
-        $query = TransaccionInventario::with(['producto', 'usuario'])
-            ->orderBy('created_at', 'desc');
-
-        if ($request->filled('producto_id')) {
-            $query->where('producto_id', $request->producto_id);
-        }
-
-        return response()->json($query->get());
-    }
-
-    public function store(Request $request)
-    {
-        $request->validate([
-            'producto_id' => 'required|exists:productos,producto_id',
-            'transaccion_tipo' => 'required|in:ingreso,salida,transferencia',
-            'transaccion_cantidad' => 'required|numeric|min:0.01',
-            'transaccion_motivo' => 'nullable|string',
-            'transaccion_referencia_id' => 'nullable|integer',
-            'transaccion_referencia_type' => 'nullable|string',
-            'transaccion_notas' => 'nullable|string',
-            'bodega_id' => 'nullable|exists:bodegas,bodega_id',
-            'bodega_origen_id' => 'required_if:transaccion_tipo,transferencia|nullable|exists:bodegas,bodega_id',
-            'bodega_destino_id' => 'required_if:transaccion_tipo,transferencia|nullable|different:bodega_origen_id|exists:bodegas,bodega_id',
+        $validated = $request->validate([
+            'producto_id' => ['nullable', 'integer', 'exists:productos,producto_id'],
+            'transaccion_tipo' => ['nullable', Rule::in(['entrada', 'ingreso', 'salida', 'transferencia'])],
+            'bodega_id' => ['nullable', 'integer', 'exists:bodegas,bodega_id'],
+            'per_page' => ['nullable', 'integer', 'min:1', 'max:100'],
+            'page' => ['nullable', 'integer', 'min:1'],
         ]);
 
-        return DB::transaction(function () use ($request) {
-            $producto = Producto::findOrFail($request->producto_id);
+        $query = TransaccionInventario::query()
+            ->with([
+                'producto:producto_id,categoria_id,producto_sku,referencia_fabrica,producto_nombre,producto_unidad_medida,producto_stock_actual,producto_alerta_stock_minimo,capacidad_maxima,producto_precio_costo,producto_ubicacion',
+                'usuario:id,name',
+                'bodega:bodega_id,nombre,tipo',
+                'bodegaOrigen:bodega_id,nombre,tipo',
+                'bodegaDestino:bodega_id,nombre,tipo',
+            ])
+            ->orderByDesc('created_at')
+            ->orderByDesc('transaccion_id');
 
-            $bodegaOrigenId = null;
-            $bodegaDestinoId = null;
-
-            if ($request->transaccion_tipo === 'transferencia') {
-                $bodegaOrigenId = $request->bodega_origen_id;
-                $bodegaDestinoId = $request->bodega_destino_id;
-
-                $origen = Bodega::find($bodegaOrigenId);
-                $destino = Bodega::find($bodegaDestinoId);
-
-                if (! $origen || ! $destino) {
-                    return response()->json([
-                        'message' => 'Bodega de origen o destino no encontrada',
-                    ], 422);
-                }
-
-                if ($origen->tipo !== 'estandar' || $destino->tipo !== 'recuperacion') {
-                    return response()->json([
-                        'message' => 'Solo se permite transferencia desde bodega estandar hacia bodega recuperacion',
-                    ], 422);
-                }
-            } else {
-                $bodegaId = $request->bodega_id;
-                if (! $bodegaId) {
-                    $bodegaPrincipal = Bodega::firstOrCreate(
-                        ['tipo' => 'estandar'],
-                        ['nombre' => 'Bodega Principal', 'descripcion' => 'Bodega central por defecto']
-                    );
-                    $bodegaId = $bodegaPrincipal->bodega_id;
-                }
-
-                if ($request->transaccion_tipo === 'ingreso') {
-                    $bodegaDestinoId = $bodegaId;
-                } else {
-                    $bodegaOrigenId = $bodegaId;
-                }
-            }
-
-            if ($bodegaOrigenId) {
-                $stockOrigen = DB::table('bodega_producto')
-                    ->where('bodega_id', $bodegaOrigenId)
-                    ->where('producto_id', $producto->producto_id)
-                    ->value('cantidad') ?? 0;
-
-                // Si no hay registro en bodega, usar el stock del producto directamente
-                if (! $stockOrigen && ! DB::table('bodega_producto')
-                    ->where('bodega_id', $bodegaOrigenId)
-                    ->where('producto_id', $producto->producto_id)
-                    ->exists()) {
-                    $stockOrigen = $producto->producto_stock_actual ?? 0;
-                }
-
-                if ($stockOrigen <= 0) {
-                    return response()->json([
-                        'message' => 'No es posible realizar salidas. El stock actual es 0 o menor.',
-                        'stock_actual' => $stockOrigen,
-                    ], 422);
-                }
-
-                if (in_array($request->transaccion_tipo, ['salida', 'transferencia']) && $request->transaccion_cantidad > $stockOrigen) {
-                    return response()->json([
-                        'message' => "Stock insuficiente. Stock actual: {$stockOrigen}, cantidad solicitada: {$request->transaccion_cantidad}.",
-                        'stock_actual' => $stockOrigen,
-                        'cantidad_solicitada' => $request->transaccion_cantidad,
-                    ], 422);
-                }
-
-                // Sincronizar bodega_producto si no existe
-                if (! DB::table('bodega_producto')
-                    ->where('bodega_id', $bodegaOrigenId)
-                    ->where('producto_id', $producto->producto_id)
-                    ->exists()) {
-                    DB::table('bodega_producto')->insert([
-                        'bodega_id' => $bodegaOrigenId,
-                        'producto_id' => $producto->producto_id,
-                        'cantidad' => $producto->producto_stock_actual ?? 0,
-                        'created_at' => now(),
-                        'updated_at' => now(),
-                    ]);
-                }
-            }
-
-            if ($request->transaccion_tipo === 'transferencia') {
-                $this->updateBodegaStock($bodegaOrigenId, $producto->producto_id, -$request->transaccion_cantidad);
-                $this->updateBodegaStock($bodegaDestinoId, $producto->producto_id, $request->transaccion_cantidad);
-            }
-
-            $ledgerBodegaId = match ($request->transaccion_tipo) {
-                'ingreso' => $bodegaDestinoId,
-                'salida' => $bodegaOrigenId,
-                default => null,
-            };
-
-            $movimiento = TransaccionInventario::create([
-                'producto_id' => $request->producto_id,
-                'bodega_id' => $ledgerBodegaId,
-                'usuario_id' => $request->user()->id,
-                'transaccion_tipo' => $request->transaccion_tipo,
-                'transaccion_cantidad' => $request->transaccion_cantidad,
-                'transaccion_motivo' => $request->transaccion_motivo,
-                'transaccion_referencia_id' => $request->transaccion_referencia_id,
-                'transaccion_referencia_type' => $request->transaccion_referencia_type,
-                'transaccion_notas' => $request->transaccion_notas,
-            ]);
-
-            $producto->refresh();
-
-            $warning = null;
-            if (in_array($request->transaccion_tipo, ['salida', 'transferencia'])) {
-                if ($producto->producto_stock_actual <= $producto->producto_alerta_stock_minimo) {
-                    $warning = 'Se ha alcanzado o superado el stock mínimo de alerta para este producto.';
-
-                    // Generar notificación inmediata usando el servicio (activa Pusher + FCM y deduplica)
-                    NotificacionService::stockBajo($producto);
-                }
-            }
-
-            return response()->json([
-                'message' => 'Movimiento registrado con exito',
-                'movimiento' => $movimiento,
-                'nuevo_stock_global' => $producto->producto_stock_actual,
-                'warning' => $warning,
-            ]);
+        $query->when(
+            isset($validated['producto_id']),
+            fn ($builder) => $builder->where('producto_id', $validated['producto_id'])
+        );
+        $query->when(
+            isset($validated['transaccion_tipo']),
+            fn ($builder) => $builder->where('transaccion_tipo', $validated['transaccion_tipo'])
+        );
+        $query->when(isset($validated['bodega_id']), function ($builder) use ($validated): void {
+            $bodegaId = $validated['bodega_id'];
+            $builder->where(function ($warehouseQuery) use ($bodegaId): void {
+                $warehouseQuery
+                    ->where('bodega_id', $bodegaId)
+                    ->orWhere('bodega_origen_id', $bodegaId)
+                    ->orWhere('bodega_destino_id', $bodegaId);
+            });
         });
+
+        $paginator = $query->paginate($validated['per_page'] ?? 25);
+        $data = MovimientoInventarioResource::collection($paginator->getCollection())->resolve($request);
+
+        return response()->json([
+            'success' => true,
+            'data' => $data,
+            'meta' => [
+                'current_page' => $paginator->currentPage(),
+                'last_page' => $paginator->lastPage(),
+                'per_page' => $paginator->perPage(),
+                'total' => $paginator->total(),
+            ],
+        ]);
     }
 
-    private function updateBodegaStock(int $bodegaId, int $productoId, float $cantidadCambio): void
+    public function store(StoreMovimientoInventarioRequest $request): JsonResponse
     {
-        $bodegaProducto = DB::table('bodega_producto')
-            ->where('bodega_id', $bodegaId)
-            ->where('producto_id', $productoId)
-            ->first();
+        $validated = $request->validated();
+        $actorId = (int) $request->user()->id;
+        $operationHash = $this->operationHash($validated);
 
-        if ($bodegaProducto) {
-            DB::table('bodega_producto')
-                ->where('bodega_id', $bodegaId)
-                ->where('producto_id', $productoId)
-                ->update([
-                    'cantidad' => $bodegaProducto->cantidad + $cantidadCambio,
-                    'updated_at' => now(),
+        if ($existing = $this->findOperation($actorId, $validated['client_operation_id'])) {
+            return $this->replayResponse($request, $existing, $operationHash);
+        }
+
+        try {
+            $result = DB::transaction(function () use ($validated, $actorId, $operationHash): array {
+                if ($existing = $this->findOperation($actorId, $validated['client_operation_id'], true)) {
+                    return ['movimiento' => $existing, 'idempotent_replay' => true];
+                }
+
+                $this->validateTransferTypes($validated);
+
+                $tipo = $validated['transaccion_tipo'];
+                $movimiento = TransaccionInventario::create([
+                    'producto_id' => $validated['producto_id'],
+                    'bodega_id' => $tipo === 'transferencia' ? null : $validated['bodega_id'],
+                    'bodega_origen_id' => $validated['bodega_origen_id'] ?? null,
+                    'bodega_destino_id' => $validated['bodega_destino_id'] ?? null,
+                    'usuario_id' => $actorId,
+                    'client_operation_id' => $validated['client_operation_id'],
+                    'client_operation_hash' => $operationHash,
+                    'transaccion_tipo' => $tipo,
+                    'transaccion_cantidad' => $validated['transaccion_cantidad'],
+                    'transaccion_motivo' => $validated['transaccion_motivo'] ?? null,
+                    'transaccion_referencia_id' => $validated['transaccion_referencia_id'] ?? null,
+                    'transaccion_referencia_type' => $validated['transaccion_referencia_type'] ?? null,
+                    'transaccion_notas' => $validated['transaccion_notas'] ?? null,
                 ]);
 
+                return ['movimiento' => $movimiento, 'idempotent_replay' => false];
+            });
+        } catch (QueryException $exception) {
+            $existing = $this->findOperation($actorId, $validated['client_operation_id']);
+            if (! $existing) {
+                throw $exception;
+            }
+
+            return $this->replayResponse($request, $existing, $operationHash);
+        }
+
+        $movimiento = $this->loadSafeRelations($result['movimiento']);
+        if ($result['idempotent_replay']) {
+            return $this->replayResponse($request, $movimiento, $operationHash);
+        }
+
+        $producto = $movimiento->producto;
+        $warning = null;
+        if ($movimiento->transaccion_tipo === 'salida'
+            && (float) $producto->producto_stock_actual <= (float) $producto->producto_alerta_stock_minimo) {
+            $warning = 'Se ha alcanzado o superado el stock mínimo de alerta para este producto.';
+            NotificacionService::stockBajo($producto);
+        }
+
+        return $this->movementResponse($request, $movimiento, false, $warning, 201);
+    }
+
+    private function validateTransferTypes(array $validated): void
+    {
+        if ($validated['transaccion_tipo'] !== 'transferencia') {
             return;
         }
 
-        DB::table('bodega_producto')->insert([
-            'bodega_id' => $bodegaId,
-            'producto_id' => $productoId,
-            'cantidad' => $cantidadCambio,
-            'created_at' => now(),
-            'updated_at' => now(),
+        $bodegas = Bodega::query()
+            ->whereIn('bodega_id', [$validated['bodega_origen_id'], $validated['bodega_destino_id']])
+            ->get()
+            ->keyBy('bodega_id');
+        $origen = $bodegas->get($validated['bodega_origen_id']);
+        $destino = $bodegas->get($validated['bodega_destino_id']);
+
+        if (! $origen || ! $destino || $origen->tipo !== 'estandar' || $destino->tipo !== 'recuperacion') {
+            throw ValidationException::withMessages([
+                'bodega_destino_id' => ['Solo se permite transferencia desde bodega estandar hacia bodega recuperacion.'],
+            ]);
+        }
+    }
+
+    private function findOperation(int $actorId, string $operationId, bool $lock = false): ?TransaccionInventario
+    {
+        $query = TransaccionInventario::query()
+            ->where('usuario_id', $actorId)
+            ->where('client_operation_id', $operationId);
+
+        if ($lock) {
+            $query->lockForUpdate();
+        }
+
+        return $query->first();
+    }
+
+    private function replayResponse(
+        Request $request,
+        TransaccionInventario $movimiento,
+        string $operationHash
+    ): JsonResponse {
+        if (! hash_equals((string) $movimiento->client_operation_hash, $operationHash)) {
+            return response()->json([
+                'message' => 'client_operation_id ya fue utilizado con un movimiento diferente.',
+            ], 409);
+        }
+
+        return $this->movementResponse($request, $this->loadSafeRelations($movimiento), true, null, 200);
+    }
+
+    private function movementResponse(
+        Request $request,
+        TransaccionInventario $movimiento,
+        bool $replay,
+        ?string $warning,
+        int $status
+    ): JsonResponse {
+        return response()->json([
+            'message' => $replay ? 'Movimiento ya registrado previamente' : 'Movimiento registrado con exito',
+            'movimiento' => (new MovimientoInventarioResource($movimiento))->resolve($request),
+            'nuevo_stock_global' => (float) $movimiento->producto->producto_stock_actual,
+            'warning' => $warning,
+            'idempotent_replay' => $replay,
+        ], $status);
+    }
+
+    private function loadSafeRelations(TransaccionInventario $movimiento): TransaccionInventario
+    {
+        return $movimiento->load([
+            'producto',
+            'usuario:id,name',
+            'bodega:bodega_id,nombre,tipo',
+            'bodegaOrigen:bodega_id,nombre,tipo',
+            'bodegaDestino:bodega_id,nombre,tipo',
         ]);
+    }
+
+    private function operationHash(array $payload): string
+    {
+        $canonical = [
+            'producto_id' => (int) $payload['producto_id'],
+            'transaccion_tipo' => $payload['transaccion_tipo'],
+            'transaccion_cantidad' => number_format((float) $payload['transaccion_cantidad'], 2, '.', ''),
+            'transaccion_motivo' => $payload['transaccion_motivo'] ?? null,
+            'transaccion_referencia_id' => isset($payload['transaccion_referencia_id']) ? (int) $payload['transaccion_referencia_id'] : null,
+            'transaccion_referencia_type' => $payload['transaccion_referencia_type'] ?? null,
+            'transaccion_notas' => $payload['transaccion_notas'] ?? null,
+            'bodega_id' => isset($payload['bodega_id']) ? (int) $payload['bodega_id'] : null,
+            'bodega_origen_id' => isset($payload['bodega_origen_id']) ? (int) $payload['bodega_origen_id'] : null,
+            'bodega_destino_id' => isset($payload['bodega_destino_id']) ? (int) $payload['bodega_destino_id'] : null,
+        ];
+
+        return hash('sha256', json_encode($canonical, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE));
     }
 }

@@ -8,13 +8,14 @@ return new class extends Migration
 {
     public function up(): void
     {
-        // Fix orden_trabajos.mecanico_asignado_id -> users: NO ACTION → SET NULL
+        // Work-order assignments already contain Empleado IDs at this point.
+        // Keep the FK on empleados and retain assignments when deleting users.
         Schema::table('orden_trabajos', function (Blueprint $table) {
             $table->dropForeign(['mecanico_asignado_id']);
             $table->foreign('mecanico_asignado_id')
                 ->references('id')
-                ->on('users')
-                ->nullOnDelete();
+                ->on('empleados')
+                ->restrictOnDelete();
         });
 
         // Fix registros_horometro.usuario_id -> users: NO ACTION → CASCADE (columna es NOT NULL)
@@ -38,25 +39,8 @@ return new class extends Migration
 
     public function down(): void
     {
-        Schema::table('orden_trabajos', function (Blueprint $table) {
-            $table->dropForeign(['mecanico_asignado_id']);
-            $table->foreign('mecanico_asignado_id')
-                ->references('id')
-                ->on('users');
-        });
-
-        Schema::table('registros_horometro', function (Blueprint $table) {
-            $table->dropForeign(['usuario_id']);
-            $table->foreign('usuario_id')
-                ->references('id')
-                ->on('users');
-        });
-
-        Schema::table('respuestas_lista_chequeo', function (Blueprint $table) {
-            $table->dropForeign(['lista_chequeo_id']);
-            $table->foreign('lista_chequeo_id')
-                ->references('id')
-                ->on('listas_chequeo');
-        });
+        throw new RuntimeException(
+            'Forward-only migration: operational foreign-key policies must be retained. Restore a verified backup for rollback.',
+        );
     }
 };
