@@ -4,6 +4,7 @@ namespace App\Http\Resources\InventoryOrders;
 
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
+use Illuminate\Support\Facades\Storage;
 
 /**
  * Representación pública de un documento privado del pedido.
@@ -29,7 +30,33 @@ class PedidoDocumentoResource extends JsonResource
             'pedido_linea_id' => $this->pedido_linea_id,
             'created_at' => $this->created_at?->toISOString(),
             'content_url' => $this->contentUrl(),
+            // BE-1: la factura PDF no genera derivado (sin renderer en el
+            // proyecto). El viewer debe leer este flag, no inferir por rol.
+            'preview_disponible' => $this->previewDisponible(),
+            'latest_ocr_attempt' => $this->whenLoaded(
+                'latestOcrIntento',
+                fn (): ?array => $this->latestOcrIntento === null
+                    ? null
+                    : (new PedidoOcrIntentoResource($this->latestOcrIntento))->resolve($request),
+            ),
         ];
+    }
+
+    private function previewDisponible(): bool
+    {
+        try {
+            $disk = (string) config('inventory_orders.documents.disk', 'local');
+
+            if ($disk === '' || $disk === 'public') {
+                $disk = 'local';
+            }
+
+            return Storage::disk($disk)->exists(
+                dirname((string) $this->storage_key).'/preview.jpg',
+            );
+        } catch (\Throwable) {
+            return $this->mime_type !== 'application/pdf';
+        }
     }
 
     private function contentUrl(): ?string

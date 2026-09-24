@@ -91,18 +91,31 @@ class PedidoDocumentoController extends Controller
         $disk = $this->service->diskName();
         $path = $this->service->previewPath($documento);
 
+        if (! Storage::disk($disk)->exists($path) && Storage::disk($disk)->exists((string) $documento->storage_key)) {
+            $path = (string) $documento->storage_key;
+        }
+
         abort_unless(Storage::disk($disk)->exists($path), 404, 'Documento no encontrado.');
+
+        // BE-1: sin derivado (factura PDF) se sirve el original con su MIME
+        // real; servir bytes PDF como image/jpeg rompería el visor.
+        $esDerivado = $path !== (string) $documento->storage_key;
+        $mime = $esDerivado ? 'image/jpeg' : (string) $documento->mime_type;
+        $extension = $esDerivado
+            ? 'jpg'
+            : ((string) $documento->mime_type === PedidoDocumentoService::MIME_PDF ? 'pdf' : 'jpg');
 
         // Nombre inline saneado: solo rol y revisión, nunca storage_key/ruta.
         $filename = sprintf(
-            'pedido-%s-%s-r%d.jpg',
+            'pedido-%s-%s-r%d.%s',
             $pedido->uuid,
             preg_replace('/[^a-z0-9_]/i', '', (string) $documento->rol),
             (int) $documento->documento_revision,
+            $extension,
         );
 
         return Storage::disk($disk)->response($path, $filename, [
-            'Content-Type' => 'image/jpeg',
+            'Content-Type' => $mime,
             'X-Content-Type-Options' => 'nosniff',
             'Cache-Control' => 'private, no-store',
             'Pragma' => 'no-cache',

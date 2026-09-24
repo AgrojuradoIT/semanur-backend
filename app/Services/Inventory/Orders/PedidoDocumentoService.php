@@ -25,6 +25,8 @@ use Throwable;
  *   archivos.
  * - El original se conserva intacto como evidencia; el derivado (preview.jpg)
  *   es una re-codificación JPEG sin metadatos y con orientación aplicada.
+ *   Excepción BE-1: la factura PDF no genera derivado (sin renderer en el
+ *   proyecto) y el recurso expone preview_disponible=false.
  * - El disco debe ser privado ('local'); nunca public/.
  * - Cualquier fallo posterior a la escritura elimina original y derivado
  *   (misma compensación que MediaService).
@@ -41,6 +43,16 @@ class PedidoDocumentoService
     private const EXTENSIONES_PERMITIDAS = ['jpg', 'jpeg', 'png'];
 
     private const MIMES_PERMITIDOS = ['image/jpeg', 'image/png'];
+
+    /**
+     * La factura acepta foto o PDF real (BE-1). El pantallazo Siigo sigue
+     * image-only: alimenta el derivado image/jpeg que consume Gemini.
+     */
+    private const EXTENSIONES_FACTURA = ['jpg', 'jpeg', 'png', 'pdf'];
+
+    private const MIMES_FACTURA = ['image/jpeg', 'image/png', 'application/pdf'];
+
+    public const MIME_PDF = 'application/pdf';
 
     /** @var list<string> */
     private const FIRMAS_DE_SCRIPT = ['<?php', '<script', '<svg', '<?xml'];
@@ -62,7 +74,7 @@ class PedidoDocumentoService
         $this->assertRolValido($rol);
         $this->validarReferencias($pedido, $replacesDocumentoId, $pedidoLineaId);
 
-        $inspeccion = $this->inspeccionarArchivo($file);
+        $inspeccion = $this->inspeccionarArchivo($file, $rol);
 
         $this->validarLimites($pedido, $inspeccion['size_bytes']);
 
@@ -71,8 +83,18 @@ class PedidoDocumentoService
         $storageKey = sprintf('pedidos/%s/%s/original.%s', $pedido->uuid, $folder, $inspeccion['extension']);
         $previewKey = self::derivativePathFor($storageKey);
 
-        $orientation = $this->orientation($inspeccion['real_path'], $inspeccion['bytes']);
-        $previewBytes = $this->buildPreview($inspeccion['resource'], $orientation);
+        // El PDF no tiene derivado: GD no rasteriza PDFs y el proyecto no
+        // trae renderer (sin imagick, sin spatie/pdf-to-image, sin
+        // pdftoppm). Se conserva el original y el recurso expone
+        // preview_disponible=false. El path de imágenes queda intacto.
+        $esPdf = $inspeccion['mime'] === self::MIME_PDF;
+
+        $previewBytes = $esPdf
+            ? null
+            : $this->buildPreview(
+                $inspeccion['resource'],
+                $this->orientation($inspeccion['real_path'], $inspeccion['bytes']),
+            );
 
         $datos = [
             'rol' => $rol,
@@ -95,11 +117,13 @@ class PedidoDocumentoService
 
             $escritos[] = $storageKey;
 
-            if (! Storage::disk($disk)->put($previewKey, $previewBytes)) {
-                throw new RuntimeException('No se pudo almacenar el derivado del documento privado.');
-            }
+            if ($previewBytes !== null) {
+                if (! Storage::disk($disk)->put($previewKey, $previewBytes)) {
+                    throw new RuntimeException('No se pudo almacenar el derivado del documento privado.');
+                }
 
-            $escritos[] = $previewKey;
+                $escritos[] = $previewKey;
+            }
 
             return $this->persistir($pedido, $actor ?? $this->actorDesdeContexto(), $datos);
         } catch (Throwable $exception) {
@@ -202,9 +226,9 @@ class PedidoDocumentoService
     }
 
     /**
-     * @return array{extension: string, mime: string, size_bytes: int, width: int, height: int, sha256: string, bytes: string, real_path: string, resource: GdImage}
+     * @return array{extension: string, mime: string, size_bytes: int, width: int|null, height: int|null, sha256: string, bytes: string, real_path: string, resource: GdImage|null}
      */
-    private function inspeccionarArchivo(UploadedFile $file): array
+    private function inspeccionarArchivo(UploadedFile $file, string $rol): array
     {
         if (! $file->isValid()) {
             $this->fallar('file', 'La carga del archivo falló o llegó incompleta.');
@@ -222,10 +246,18 @@ class PedidoDocumentoService
             $this->fallar('file', sprintf('El archivo supera el máximo de %s MB.', (string) config('inventory_orders.documents.max_file_mb', 10)));
         }
 
+        // Allowlist por rol: factura acepta PDF real; pantallazo sigue
+        // image-only porque su derivado image/jpeg alimenta a Gemini.
+        $esFactura = $rol === self::ROL_FACTURA;
+        $extensiones = $esFactura ? self::EXTENSIONES_FACTURA : self::EXTENSIONES_PERMITIDAS;
+        $mimes = $esFactura ? self::MIMES_FACTURA : self::MIMES_PERMITIDOS;
+
         $extension = strtolower((string) $file->getClientOriginalExtension());
 
-        if (! in_array($extension, self::EXTENSIONES_PERMITIDAS, true)) {
-            $this->fallar('file', 'La extensión debe ser JPG, JPEG o PNG.');
+        if (! in_array($extension, $extensiones, true)) {
+            $this->fallar('file', $esFactura
+                ? 'La extensión debe ser JPG, JPEG, PNG o PDF.'
+                : 'La extensión debe ser JPG, JPEG o PNG.');
         }
 
         $realPath = $file->getRealPath();
@@ -238,13 +270,20 @@ class PedidoDocumentoService
         $mime = (new \finfo(FILEINFO_MIME_TYPE))->file($realPath);
         $mime = is_string($mime) ? strtolower(trim($mime)) : '';
 
-        if (! in_array($mime, self::MIMES_PERMITIDOS, true)) {
-            $this->fallar('file', 'El contenido real del archivo no es una imagen JPEG o PNG.');
+        if (! in_array($mime, $mimes, true)) {
+            $this->fallar('file', $esFactura
+                ? 'El contenido real del archivo no es una imagen JPEG/PNG ni un PDF.'
+                : 'El contenido real del archivo no es una imagen JPEG o PNG.');
         }
 
-        $mimeEsperado = in_array($extension, ['jpg', 'jpeg'], true) ? 'image/jpeg' : 'image/png';
+        $mimeEsperado = match ($extension) {
+            'jpg', 'jpeg' => 'image/jpeg',
+            'png' => 'image/png',
+            'pdf' => self::MIME_PDF,
+            default => null,
+        };
 
-        if ($mime !== $mimeEsperado) {
+        if ($mimeEsperado === null || $mime !== $mimeEsperado) {
             $this->fallar('file', 'La extensión y el contenido real del archivo no coinciden.');
         }
 
@@ -256,6 +295,26 @@ class PedidoDocumentoService
 
         if ($this->tieneFirmaDeScript($bytes)) {
             $this->fallar('file', 'El archivo contiene firmas de script o marcado no permitidas.');
+        }
+
+        if ($mime === self::MIME_PDF) {
+            // width/height quedan null (columnas nullable, sin migración):
+            // un PDF no tiene dimensiones de imagen y GD no lo decodifica.
+            if (! $this->pdfEstructuralmenteCompleto($bytes)) {
+                $this->fallar('file', 'El PDF está truncado: no contiene la cabecera %PDF ni el cierre %%EOF.');
+            }
+
+            return [
+                'extension' => $extension,
+                'mime' => $mime,
+                'size_bytes' => $size,
+                'width' => null,
+                'height' => null,
+                'sha256' => hash('sha256', $bytes),
+                'bytes' => $bytes,
+                'real_path' => $realPath,
+                'resource' => null,
+            ];
         }
 
         if (! $this->archivoCompleto($bytes, $mime)) {
@@ -358,6 +417,22 @@ class PedidoDocumentoService
             'image/png' => str_contains($cola, 'IEND'),
             default => false,
         };
+    }
+
+    /**
+     * Chequeo estructural mínimo del PDF: cabecera %PDF al inicio (finfo ya
+     * confirmó application/pdf) y marcador %%EOF en la cola. No confía en la
+     * extensión ni en el Content-Type del cliente.
+     */
+    private function pdfEstructuralmenteCompleto(string $bytes): bool
+    {
+        $inicio = ltrim($bytes, "\xEF\xBB\xBF\x00\x09\x0A\x0D\x20");
+
+        if (! str_starts_with($inicio, '%PDF-')) {
+            return false;
+        }
+
+        return str_contains(substr($bytes, -2048), '%%EOF');
     }
 
     private function tieneFirmaDeScript(string $bytes): bool
