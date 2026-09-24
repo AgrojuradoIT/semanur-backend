@@ -239,6 +239,127 @@ class SiigoScreenshotMapperTest extends TestCase
         return $this->mapper->mapear($crudo, $this->contexto());
     }
 
+    public function test_celdas_que_colisionan_en_la_misma_columna_se_unen_sin_perder_texto(): void
+    {
+        $crudo = $this->crudo([
+            $this->cabecera(1),
+            [
+                'row' => 2,
+                'cells' => [
+                    ['column' => 1, 'text' => 'TO000057', 'confidence' => 0.95, 'bounding_box' => ['x' => 10, 'y' => 10, 'width' => 50, 'height' => 20]],
+                    // Dos celdas asignadas a la columna 2 (Descripcion)
+                    ['column' => 2, 'text' => 'TORNILLO', 'confidence' => 0.90, 'bounding_box' => ['x' => 70, 'y' => 10, 'width' => 50, 'height' => 20]],
+                    ['column' => 2, 'text' => 'CORTAMALEZA', 'confidence' => 0.85, 'bounding_box' => ['x' => 130, 'y' => 10, 'width' => 60, 'height' => 20]],
+                    ['column' => 4, 'text' => '4.00', 'confidence' => 0.92, 'bounding_box' => ['x' => 200, 'y' => 10, 'width' => 30, 'height' => 20]],
+                ],
+            ],
+        ]);
+
+        $contrato = $this->mapper->mapear($crudo, $this->contexto());
+
+        $this->assertCount(1, $contrato['lines']);
+        $linea = $contrato['lines'][0];
+        $this->assertSame('TORNILLO CORTAMALEZA', $linea['description']['value']);
+        $this->assertSame(0.85, $linea['description']['confidence']);
+        $this->assertSame(['x' => 70, 'y' => 10, 'width' => 120, 'height' => 20], $linea['bounding_boxes']['description']);
+    }
+
+    public function test_pantallazo_real_siigo_detecta_proveedores_cabecera_producto_y_excluye_fila_buscar(): void
+    {
+        $crudo = $this->crudo([
+            $this->fila(1, ['Tipo', 'DS - 1 - Documento Soporte Electronico', 'Número', '2433']),
+            $this->fila(2, ['Fecha de elaboración', '09/09/2026', 'No. comprobante proveedor', 'DS']),
+            $this->fila(3, ['Proveedores', 'Oscar Darío Diaz Casarubias', 'Ver perfil', 'Centro de costo', 'MASSYF2625N1-1']),
+            $this->fila(4, ['Contacto', 'Oscar Darío Diaz Casarubias (OSDADIC...']),
+            $this->fila(5, ['Descuento en porcentaje']),
+            $this->fila(6, ['#', 'Tipo', 'Producto', 'Descripción', 'Bodega', 'Cant', 'Valor Unitario', 'Descuento', 'Impuesto Cargo', 'Impuesto Retención', 'Valor Total']),
+            $this->fila(7, ['1', 'Producto', 'TO000057', 'TORNILLO CORTAMALEZA', 'Repuestos', '4.00', '75,000.00', '0.00', '', '', '300,000.00']),
+            $this->fila(8, ['2', 'Producto', 'Buscar', '', '', '1.00', '0.00', '0.00', '', '', '0.00']),
+            $this->fila(9, ['Total Bruto:', '300,000.00']),
+        ]);
+
+        $contrato = $this->mapper->mapear($crudo, $this->contexto());
+
+        $this->assertNotNull($contrato['supplier']);
+        $this->assertSame('Oscar Darío Diaz Casarubias', $contrato['supplier']['value']);
+        $this->assertCount(1, $contrato['lines']);
+
+        $linea = $contrato['lines'][0];
+        $this->assertSame('TO000057', $linea['sku']['value']);
+        $this->assertSame('TORNILLO CORTAMALEZA', $linea['description']['value']);
+        $this->assertSame('4.00', $linea['expected_quantity']['value']);
+
+        $this->assertEmpty(array_filter($contrato['warnings'], fn ($w) => $w['blocking'] ?? false));
+        $this->assertFalse($contrato['requires_human_revision']);
+
+        $motivos = array_column($contrato['ignored_rows'], 'reason');
+        $this->assertContains('fila_captura_vacia', $motivos);
+        $this->assertContains('proveedor', $motivos);
+        $this->assertContains('cabecera_tabla', $motivos);
+        $this->assertContains('totales', $motivos);
+    }
+
+    public function test_fix3_producto_con_total_en_nombre_no_se_descarta_como_totales(): void
+    {
+        $crudo = $this->crudo([
+            $this->fila(1, ['Señor(es):', 'PROVEEDOR PRUEBA']),
+            $this->cabecera(2),
+            $this->filaProducto(3, 'AC2577', 'ACEITE TOTAL 15W40', '2.00'),
+        ]);
+
+        $contrato = $this->mapper->mapear($crudo, $this->contexto());
+
+        $this->assertCount(1, $contrato['lines']);
+        $linea = $contrato['lines'][0];
+        $this->assertSame('AC2577', $linea['sku']['value']);
+        $this->assertSame('ACEITE TOTAL 15W40', $linea['description']['value']);
+        $this->assertSame('2.00', $linea['expected_quantity']['value']);
+        $this->assertFalse($contrato['requires_human_revision']);
+    }
+
+    public function test_fix3_producto_con_contacto_en_nombre_no_se_descarta_como_contacto(): void
+    {
+        $crudo = $this->crudo([
+            $this->fila(1, ['Señor(es):', 'PROVEEDOR PRUEBA']),
+            $this->cabecera(2),
+            $this->filaProducto(3, 'LC8890', 'LIMPIADOR DE CONTACTO', '3.00'),
+        ]);
+
+        $contrato = $this->mapper->mapear($crudo, $this->contexto());
+
+        $this->assertCount(1, $contrato['lines']);
+        $linea = $contrato['lines'][0];
+        $this->assertSame('LC8890', $linea['sku']['value']);
+        $this->assertSame('LIMPIADOR DE CONTACTO', $linea['description']['value']);
+        $this->assertSame('3.00', $linea['expected_quantity']['value']);
+        $this->assertFalse($contrato['requires_human_revision']);
+    }
+
+    public function test_fix3_continuacion_desalineada_exige_revision_en_vez_de_perderse(): void
+    {
+        $crudo = $this->crudo([
+            $this->fila(1, ['Señor(es):', 'PROVEEDOR PRUEBA']),
+            $this->cabecera(2),
+            $this->filaProducto(3, 'TO000057', 'TORNILLO', '4.00'),
+            // Segunda línea visual desplazada en x: el puente la deja en una
+            // columna nueva (7) fuera de SKU/descripción/cantidad (1/2/4).
+            ['row' => 4, 'cells' => [
+                ['column' => 7, 'text' => 'CORTAMALEZA', 'confidence' => 0.85, 'bounding_box' => ['x' => 206, 'y' => 280, 'width' => 120, 'height' => 24]],
+            ]],
+        ]);
+
+        $contrato = $this->mapper->mapear($crudo, $this->contexto());
+
+        // La línea legible se conserva; la continuación queda registrada...
+        $this->assertCount(1, $contrato['lines']);
+        $this->assertSame('fila_vacia', $this->ignorada($contrato['ignored_rows'], 'fila_vacia')['reason']);
+
+        // ...pero ya no se pierde en silencio: exige revisión humana.
+        $this->assertTrue($contrato['requires_human_revision']);
+        $advertencia = $this->advertencia($contrato['warnings'], 'fila_posible_continuacion');
+        $this->assertTrue($advertencia['blocking']);
+    }
+
     /**
      * @return array<string, mixed>
      */

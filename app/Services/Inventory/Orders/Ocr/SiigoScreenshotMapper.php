@@ -37,7 +37,7 @@ final class SiigoScreenshotMapper
     private const ETIQUETAS_CANTIDAD = ['cant', 'cantidad', 'unidades', 'und', 'un'];
 
     /** @var list<string> */
-    private const ETIQUETAS_PROVEEDOR = ['proveedor', 'senor', 'senores', 'senor(es)', 'senora', 'senoras', 'cliente'];
+    private const ETIQUETAS_PROVEEDOR = ['proveedor', 'proveedores', 'senor', 'senores', 'senor(es)', 'senora', 'senoras', 'cliente'];
 
     /**
      * @param  array<string, mixed>  $crudo  Estructura del proveedor (ver PedidoOcrProvider).
@@ -104,19 +104,25 @@ final class SiigoScreenshotMapper
                     continue;
                 }
 
-                if ($this->esFilaTotales($texto)) {
+                // FIX-3 (#2432): una fila con contexto de producto (cantidad
+                // más SKU o descripción en sus columnas) nunca se descarta
+                // como totales/empresa/contacto: "ACEITE TOTAL 15W40" o
+                // "LIMPIADOR DE CONTACTO" son productos, no rótulos.
+                $tieneContextoProducto = $this->tieneContextoProducto($celdas, $columnas, $vistaCabecera);
+
+                if (! $tieneContextoProducto && $this->esFilaTotales($texto)) {
                     $ignoradas[] = $this->ignorada($numeroPagina, $numeroFila, 'totales', $texto);
 
                     continue;
                 }
 
-                if ($this->esFilaEmpresa($texto)) {
+                if (! $tieneContextoProducto && $this->esFilaEmpresa($texto)) {
                     $ignoradas[] = $this->ignorada($numeroPagina, $numeroFila, 'encabezado_empresa', $texto);
 
                     continue;
                 }
 
-                if ($this->esFilaContacto($texto)) {
+                if (! $tieneContextoProducto && $this->esFilaContacto($texto)) {
                     $ignoradas[] = $this->ignorada($numeroPagina, $numeroFila, 'contacto', $texto);
 
                     continue;
@@ -142,11 +148,33 @@ final class SiigoScreenshotMapper
                 $descripcionRaw = $descripcion !== null ? trim($descripcion['text']) : '';
                 $cantidadRaw = $cantidad !== null ? trim($cantidad['text']) : '';
 
-                if ($skuRaw === '' && $descripcionRaw === '') {
+                $skuNormalizado = mb_strtolower($this->etiquetaNormalizada($skuRaw));
+                $esFilaBuscarVacia = ($skuNormalizado === 'buscar' && $descripcionRaw === '');
+
+                if (($skuRaw === '' && $descripcionRaw === '') || $esFilaBuscarVacia) {
+                    $motivo = ($cantidadRaw !== '' || $esFilaBuscarVacia) ? 'fila_captura_vacia' : 'fila_vacia';
+
+                    // FIX-3 (#2432): una fila que se iba a descartar en silencio
+                    // pero trae texto fuera de las columnas mapeadas (outlier
+                    // geométrico del puente) o una "cantidad" que no es número
+                    // exige revisión humana en vez de perderse sin rastro.
+                    // No se inventa fusión: solo se marca para revisión.
+                    if (! $esFilaBuscarVacia
+                        && $this->esPosibleContinuacionDesalineada($celdas, $columnas, $cantidadRaw)) {
+                        $warnings[] = $this->warning(
+                            'fila_posible_continuacion',
+                            'La fila no tiene código ni descripción pero trae texto fuera de las columnas de la tabla; podría ser una continuación desalineada y requiere revisión humana.',
+                            true,
+                            $numeroPagina,
+                            $numeroFila,
+                            mb_substr($texto, 0, 200),
+                        );
+                    }
+
                     $ignoradas[] = $this->ignorada(
                         $numeroPagina,
                         $numeroFila,
-                        $cantidadRaw !== '' ? 'fila_captura_vacia' : 'fila_vacia',
+                        $motivo,
                         $texto,
                     );
 
@@ -387,6 +415,7 @@ final class SiigoScreenshotMapper
         $sku = null;
         $descripcion = null;
         $cantidad = null;
+        $producto = null;
 
         foreach ($celdas as $columna => $celda) {
             $etiqueta = $this->etiquetaNormalizada((string) ($celda['text'] ?? ''));
@@ -406,6 +435,16 @@ final class SiigoScreenshotMapper
             if ($cantidad === null && in_array($etiqueta, self::ETIQUETAS_CANTIDAD, true)) {
                 $cantidad = (int) $columna;
             }
+
+            if ($producto === null && in_array($etiqueta, ['producto', 'productos'], true)) {
+                $producto = (int) $columna;
+            }
+        }
+
+        if ($sku === null && $descripcion !== null && $producto !== null) {
+            $sku = $producto;
+        } elseif ($descripcion === null && $sku !== null && $producto !== null) {
+            $descripcion = $producto;
         }
 
         if ($sku === null || $descripcion === null || $cantidad === null) {
@@ -493,6 +532,64 @@ final class SiigoScreenshotMapper
     {
         return $texto !== ''
             && preg_match('/\b(sub\s*total|total|iva|rete\s*fuente|retefuente|retenci[oó]n|descuento|flete|anticipo|saldo|abono)\b/iu', $texto) === 1;
+    }
+
+    /**
+     * Indica si la fila trae contexto de producto en las columnas de la
+     * tabla: cantidad legible más SKU o descripción. La cantidad es
+     * obligatoria: un rótulo de totales ("SUBTOTAL") puede caer en la
+     * columna SKU según el layout del proveedor, pero nunca trae Cant;
+     * sin cantidad no hay línea pedible y el rótulo genuino se sigue
+     * filtrando. Solo se usa para no confundir un producto
+     * ("ACEITE TOTAL 15W40") con un rótulo de totales/contacto/empresa.
+     *
+     * @param  array<int, array<string, mixed>>  $celdas
+     * @param  array{sku: int, descripcion: int, cantidad: int}|null  $columnas
+     */
+    private function tieneContextoProducto(array $celdas, ?array $columnas, bool $vistaCabecera): bool
+    {
+        if (! $vistaCabecera || $columnas === null) {
+            return false;
+        }
+
+        $sku = $celdas[$columnas['sku']] ?? null;
+        $descripcion = $celdas[$columnas['descripcion']] ?? null;
+        $cantidad = $celdas[$columnas['cantidad']] ?? null;
+
+        if (trim((string) ($cantidad['text'] ?? '')) === '') {
+            return false;
+        }
+
+        return trim((string) ($sku['text'] ?? '')) !== ''
+            || trim((string) ($descripcion['text'] ?? '')) !== '';
+    }
+
+    /**
+     * Detecta una posible continuación desalineada en una fila que se iba a
+     * descartar como vacía: texto en columnas fuera de las mapeadas (el
+     * puente creó una columna nueva por el desplazamiento en x) o una
+     * "cantidad" que no es un número (texto caído en la columna Cant).
+     *
+     * @param  array<int, array<string, mixed>>  $celdas
+     * @param  array{sku: int, descripcion: int, cantidad: int}|null  $columnas
+     */
+    private function esPosibleContinuacionDesalineada(array $celdas, ?array $columnas, string $cantidadRaw): bool
+    {
+        if ($columnas !== null) {
+            $mapeadas = [(int) $columnas['sku'], (int) $columnas['descripcion'], (int) $columnas['cantidad']];
+
+            foreach ($celdas as $columna => $celda) {
+                if (in_array((int) $columna, $mapeadas, true)) {
+                    continue;
+                }
+
+                if (trim((string) ($celda['text'] ?? '')) !== '') {
+                    return true;
+                }
+            }
+        }
+
+        return $cantidadRaw !== '' && DecimalQuantity::tryNormalize($cantidadRaw, true) === null;
     }
 
     private function esFilaContacto(string $texto): bool
@@ -623,13 +720,25 @@ final class SiigoScreenshotMapper
                     $columna = (int) ($celda['column'] ?? (count($celdas) + 1));
                     $confidence = $celda['confidence'] ?? null;
                     $confidence = is_numeric($confidence) ? (float) $confidence : null;
-                    $box = $celda['bounding_box'] ?? null;
+                    $box = is_array($celda['bounding_box'] ?? null) ? $celda['bounding_box'] : null;
+                    $texto = (string) ($celda['text'] ?? '');
 
-                    $celdas[$columna] = [
-                        'text' => (string) ($celda['text'] ?? ''),
-                        'confidence' => $confidence,
-                        'box' => is_array($box) ? $box : null,
-                    ];
+                    if (isset($celdas[$columna])) {
+                        $prev = $celdas[$columna];
+                        $celdas[$columna] = [
+                            'text' => trim($prev['text'].' '.$texto),
+                            'confidence' => $confidence !== null
+                                ? ($prev['confidence'] !== null ? min($prev['confidence'], $confidence) : $confidence)
+                                : $prev['confidence'],
+                            'box' => $this->unirCajas($prev['box'], $box),
+                        ];
+                    } else {
+                        $celdas[$columna] = [
+                            'text' => $texto,
+                            'confidence' => $confidence,
+                            'box' => $box,
+                        ];
+                    }
                 }
 
                 ksort($celdas);
@@ -648,4 +757,33 @@ final class SiigoScreenshotMapper
 
         return $paginas;
     }
+
+    /**
+     * @param  array{x: int, y: int, width: int, height: int}|null  $a
+     * @param  array{x: int, y: int, width: int, height: int}|null  $b
+     * @return array{x: int, y: int, width: int, height: int}|null
+     */
+    private function unirCajas(?array $a, ?array $b): ?array
+    {
+        if ($a === null) {
+            return $b;
+        }
+
+        if ($b === null) {
+            return $a;
+        }
+
+        $xMin = min($a['x'] ?? 0, $b['x'] ?? 0);
+        $yMin = min($a['y'] ?? 0, $b['y'] ?? 0);
+        $xMax = max(($a['x'] ?? 0) + ($a['width'] ?? 0), ($b['x'] ?? 0) + ($b['width'] ?? 0));
+        $yMax = max(($a['y'] ?? 0) + ($a['height'] ?? 0), ($b['y'] ?? 0) + ($b['height'] ?? 0));
+
+        return [
+            'x' => $xMin,
+            'y' => $yMin,
+            'width' => max($xMax - $xMin, 1),
+            'height' => max($yMax - $yMin, 1),
+        ];
+    }
 }
+
