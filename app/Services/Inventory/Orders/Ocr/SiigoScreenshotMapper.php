@@ -166,6 +166,16 @@ final class SiigoScreenshotMapper
                     continue;
                 }
 
+                // Siigo search-box ghost row ("Buscar Q"): noise from the grid's
+                // search input, never a real product line. Genuine product rows
+                // missing their description still fall through to
+                // descripcion_ausente below.
+                if ($this->esFilaBuscadorSiigo($skuRaw, $descripcionRaw)) {
+                    $ignoradas[] = $this->ignorada($numeroPagina, $numeroFila, 'buscador_siigo', $texto);
+
+                    continue;
+                }
+
                 $lineas[] = $this->construirLinea(
                     $numeroPagina,
                     $numeroFila,
@@ -636,6 +646,25 @@ final class SiigoScreenshotMapper
         }
 
         return true;
+    }
+
+    /**
+     * Siigo search-box ghost row: the grid's search input ("Buscar Q") gets
+     * OCR'd as a data row. Either the description holds the search text
+     * itself, or it is empty while the SKU cell holds it. Both shapes are UI
+     * noise, not a product missing its description (that case keeps the
+     * blocking descripcion_ausente warning in construirLinea).
+     */
+    private function esFilaBuscadorSiigo(string $skuRaw, string $descripcionRaw): bool
+    {
+        $descripcion = trim($descripcionRaw);
+
+        if ($descripcion !== '' && preg_match('/^buscar(\s|$)/iu', $descripcion) === 1) {
+            return true;
+        }
+
+        return $descripcion === ''
+            && ($skuRaw === '' || preg_match('/^buscar(\s|$)/iu', trim($skuRaw)) === 1);
     }
 
     private function unirMultilinea(string $texto): string
