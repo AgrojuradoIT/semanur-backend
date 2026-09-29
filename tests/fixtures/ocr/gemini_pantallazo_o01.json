@@ -1,0 +1,16 @@
+{
+  "candidates": [
+    {
+      "content": {
+        "parts": [
+          {
+            "text": "{\n  \"filas\": [\n    [\"SEMANUR S.A.S.\", \"NIT 900.123.456-7\"],\n    [\"Señor(es):\", \"OSCAR DARÍO DÍAZ CASARUBIAS\"],\n    [\"Dirección:\", \"CALLE 10 # 20-30\"],\n    [\"BUSCAR\", \"DESCRIPCIÓN\", \"BODEGA\", \"CANT\", \"VALOR UNIT.\", \"VALOR TOTAL\"],\n    [\"TO000057\", \"TORNILLO CORTAMALEZA\", \"Repuestos\", \"4.00\", \"75,000.00\", \"300,000.00\"],\n    [\"\", \"\", \"\", \"1.00\"],\n    [\"SUBTOTAL\", \"300,000.00\"],\n    [\"Guardar\", \"Cancelar\"]\n  ]\n}"
+          }
+        ],
+        "role": "model"
+      },
+      "finishReason": "STOP",
+      "index": 0
+    }
+  ]
+}
